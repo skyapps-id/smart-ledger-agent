@@ -42,6 +42,9 @@ Aturan "affects_stock" (HANYA untuk EXPENSE):
 
 Konversi unit:
 - Ubah kemasan grosir ke unit eceran terbesar. Contoh "1 dus isi 50pcs" -> quantity: 50, unit: "pcs", notes: "1 dus".
+- Untuk format dengan "X" atau "x": "kecap 250ml X 5 botol" -> item_name:"kecap 250ml", quantity:5, unit:"botol", notes:"250ml per botol".
+- "Teh 100gr X 10 bungkus" -> item_name:"teh 100gr", quantity:10, unit:"bungkus", notes:"100gr per bungkus".
+- Untuk format "isi": "1 liter isi 12 botol" -> item_name:"minuman", quantity:12, unit:"botol", notes:"1liter per botol".
 
 Aturan ekstraksi quantity dan unit dari nama barang (PENTING):
 - Bila nama barang mengandung ukuran, pisahkan menjadi item_name, quantity, dan unit.
@@ -101,6 +104,7 @@ Field wajib: type, category, item_name, quantity, unit, amount, affects_stock, n
 Contoh keluaran:
 {"type":"EXPENSE","category":"MINUMAN","item_name":"susu uht","quantity":50,"unit":"pcs","amount":500000,"affects_stock":true,"notes":"1 dus","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"SEMBAKO","item_name":"beras","quantity":5,"unit":"kg","amount":75000,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"EXPENSE","category":"SEMBAKO","item_name":"kecap 250ml","quantity":5,"unit":"botol","amount":100000,"affects_stock":true,"notes":"250ml per botol","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MINUMAN","item_name":"Air","quantity":250,"unit":"ml","amount":45000,"affects_stock":true,"notes":"","transaction_date":"2025-07-01","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2025-08-10","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"2025-08-09","consumption_date":"","total_consumption":0}

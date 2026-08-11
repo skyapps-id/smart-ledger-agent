@@ -11,6 +11,7 @@ Cukup kirim pesan seperti biasa, contoh:
 PENGELUARAN:
 > Beli bensin 50rb
 > Beli susu UHT 1 dus isi 50pcs harga 500rb
+> Kecap 250ml X 5 botol 100rb
 > Bayar listrik 200rb
 
 PEMASUKAN:

@@ -14,9 +14,9 @@ type WahaPayload struct {
 		Lid string `json:"lid"` // mis. "159948994543807@lid"
 	} `json:"me"`
 	Payload struct {
-		From         string   `json:"from"`         // chat: phone@c.us / @lid / groupid@g.us
-		Author       string   `json:"author"`       // sender asli pada pesan group (sebagian engine)
-		Participant  string   `json:"participant"`  // sender asli pada pesan group (NOWEB)
+		From         string   `json:"from"`        // chat: phone@c.us / @lid / groupid@g.us
+		Author       string   `json:"author"`      // sender asli pada pesan group (sebagian engine)
+		Participant  string   `json:"participant"` // sender asli pada pesan group (NOWEB)
 		FromMe       bool     `json:"fromMe"`
 		Body         string   `json:"body"`
 		Type         string   `json:"type"`

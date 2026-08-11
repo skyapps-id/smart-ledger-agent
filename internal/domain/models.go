@@ -78,14 +78,14 @@ func (StockLog) TableName() string { return "stock_logs" }
 // Extraction adalah contract JSON yang dikembalikan oleh LLM.
 // Sesuai RFC §5.1 dan §6.1.
 type Extraction struct {
-	Type        ExtractionType `json:"type"`
-	Category    string         `json:"category"`
-	ItemName    string         `json:"item_name"`
-	Quantity    float64        `json:"quantity"`
-	Unit        string         `json:"unit"`
-	Amount      float64        `json:"amount"`
-	AffectsStock bool          `json:"affects_stock"`
-	Notes       string         `json:"notes"`
+	Type         ExtractionType `json:"type"`
+	Category     string         `json:"category"`
+	ItemName     string         `json:"item_name"`
+	Quantity     float64        `json:"quantity"`
+	Unit         string         `json:"unit"`
+	Amount       float64        `json:"amount"`
+	AffectsStock bool           `json:"affects_stock"`
+	Notes        string         `json:"notes"`
 }
 
 type ExtractionType string

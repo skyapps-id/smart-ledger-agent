@@ -95,4 +95,3 @@ func main() {
 
 	logger.Info("aplikasi berhenti dengan bersih")
 }
-

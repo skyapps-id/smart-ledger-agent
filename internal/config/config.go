@@ -10,11 +10,11 @@ import (
 
 // Config menyimpan seluruh konfigurasi aplikasi yang dibaca dari environment.
 type Config struct {
-	App      AppConfig
-	DB       DBConfig
-	WAHA     WAHAConfig
-	LLM      LLMConfig
-	Worker   WorkerConfig
+	App    AppConfig
+	DB     DBConfig
+	WAHA   WAHAConfig
+	LLM    LLMConfig
+	Worker WorkerConfig
 }
 
 type AppConfig struct {
@@ -23,8 +23,7 @@ type AppConfig struct {
 }
 
 type DBConfig struct {
-	Driver string // sqlite | postgres
-	DSN   string
+	DSN string // PostgreSQL connection string
 }
 
 type WAHAConfig struct {
@@ -56,8 +55,7 @@ func Load() (*Config, error) {
 			Port: env("APP_PORT", "8080"),
 		},
 		DB: DBConfig{
-			Driver: env("DB_DRIVER", "sqlite"),
-			DSN:    env("DB_DSN", "./data/smart-ledger.db"),
+			DSN: env("DB_DSN", "host=localhost user=postgres password=postgres dbname=smart_ledger port=5432 sslmode=disable timezone=Asia/Jakarta"),
 		},
 		WAHA: WAHAConfig{
 			BaseURL:      env("WAHA_BASE_URL", "http://localhost:3000"),

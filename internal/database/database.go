@@ -2,9 +2,7 @@ package database
 
 import (
 	"fmt"
-	"path/filepath"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -13,7 +11,7 @@ import (
 	"smart-ledger-agent/internal/domain"
 )
 
-// New membuka koneksi database sesuai driver yang dikonfigurasi
+// New membuka koneksi PostgreSQL sesuai DSN yang dikonfigurasi
 // dan menjalankan auto-migrate untuk seluruh model domain.
 func New(cfg config.DBConfig) (*gorm.DB, error) {
 	db, err := open(cfg)
@@ -28,24 +26,9 @@ func New(cfg config.DBConfig) (*gorm.DB, error) {
 }
 
 func open(cfg config.DBConfig) (*gorm.DB, error) {
-	gormCfg := &gorm.Config{
+	return gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
-	}
-
-	switch cfg.Driver {
-	case "postgres":
-		return gorm.Open(postgres.Open(cfg.DSN), gormCfg)
-	case "sqlite":
-		// Pastikan direktori file sqlite sudah ada.
-		if dir := filepath.Dir(cfg.DSN); dir != "." && dir != "" {
-			if err := mkdirAll(dir); err != nil {
-				return nil, err
-			}
-		}
-		return gorm.Open(sqlite.Open(cfg.DSN), gormCfg)
-	default:
-		return nil, fmt.Errorf("driver database tidak dikenal: %s", cfg.Driver)
-	}
+	})
 }
 
 func autoMigrate(db *gorm.DB) error {

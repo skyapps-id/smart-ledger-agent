@@ -6,7 +6,7 @@
 - **Authors:** Backend Engineering Team
 - **Created:** August 10, 2026
 - **Last Updated:** August 11, 2026
-- **Target Stack:** Go 1.25 (Echo v4 + GORM), WAHA 2026.7 (engine NOWEB), OpenRouter (DeepSeek API), SQLite (pure-Go `glebarez/sqlite`) / PostgreSQL
+- **Target Stack:** Go 1.25 (Echo v4 + GORM), WAHA 2026.7 (engine NOWEB), OpenRouter (DeepSeek API), PostgreSQL
 
 > **Riwayat Revisi**
 > - **Rev. A (8 Aug 2026):** Spesifikasi awal (Draft).
@@ -77,7 +77,7 @@ Sistem dirancang berdasar pada arsitektur *event-driven asynchronous pipeline* u
 
 ### 4.1. Komponen Teknologi
 - **HTTP Framework:** Echo v4 (handler webhook, health check, middleware).
-- **ORM / Persistence:** GORM dengan driver `glebarez/sqlite` (pure-Go, CGO-free) atau PostgreSQL.
+- **ORM / Persistence:** GORM dengan driver `gorm.io/driver/postgres`. Database tunggal: PostgreSQL (di-deploy via container `postgres:16-alpine`, lihat `docker-compose.yml`).
 - **Worker Pool:** goroutine pool ber-channel dengan *exponential backoff* untuk error retryable.
 - **WAHA Engine:** NOWEB (ringan, tanpa Chromium). Image Docker: `devlikeapro/waha:noweb-arm` (arm64) / `devlikeapro/waha:noweb` (amd64).
 

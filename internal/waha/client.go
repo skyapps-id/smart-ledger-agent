@@ -35,8 +35,8 @@ type wahaClient struct {
 }
 
 type sendTextRequest struct {
-	ChatID string `json:"chatId"`
-	Text   string `json:"text"`
+	ChatID  string `json:"chatId"`
+	Text    string `json:"text"`
 	Session string `json:"session"`
 }
 

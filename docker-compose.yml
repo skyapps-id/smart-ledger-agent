@@ -11,6 +11,28 @@
 
 services:
   # ───────────────────────────────────────────────────────────
+  # PostgreSQL - basis data utama (Rev. D)
+  # ───────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: smart-ledger-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-smart_ledger}
+      TZ: Asia/Jakarta
+    volumes:
+      - ./data/pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-smart_ledger}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ───────────────────────────────────────────────────────────
   # WAHA - WhatsApp HTTP API
   # ───────────────────────────────────────────────────────────
   waha:
@@ -56,17 +78,17 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - waha
+      waha:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
       APP_ENV: production
       APP_PORT: "8080"
-      DB_DRIVER: sqlite
-      DB_DSN: /app/data/smart-ledger.db
+      DB_DSN: host=postgres user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:-postgres} dbname=${POSTGRES_DB:-smart_ledger} port=5432 sslmode=disable timezone=Asia/Jakarta
       WAHA_BASE_URL: http://waha:3000
       WAHA_SESSION: default
       WAHA_API_KEY: ${WAHA_API_KEY}
       WAHA_WEBHOOK_TOKEN: ${WAHA_WEBHOOK_TOKEN}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-chat}
-    volumes:
-      - ./data:/app/data

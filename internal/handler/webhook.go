@@ -21,9 +21,9 @@ type MessageQueue interface {
 
 // WebhookHandler menangani callback WAHA untuk pesan masuk.
 type WebhookHandler struct {
-	queue   MessageQueue
-	token   string
-	log     *slog.Logger
+	queue MessageQueue
+	token string
+	log   *slog.Logger
 }
 
 // NewWebhook membuat handler webhook.

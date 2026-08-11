@@ -28,9 +28,9 @@ func (h *HealthHandler) Ready(c echo.Context) error {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return c.JSON(http.StatusOK, echo.Map{
-		"status":   "ready",
-		"uptime_s": int(time.Since(h.startTime).Seconds()),
-		"goroutines": runtime.NumGoroutine(),
+		"status":       "ready",
+		"uptime_s":     int(time.Since(h.startTime).Seconds()),
+		"goroutines":   runtime.NumGoroutine(),
 		"mem_alloc_kb": m.Alloc / 1024,
 	})
 }

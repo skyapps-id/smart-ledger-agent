@@ -1,4 +1,4 @@
-.PHONY: run build tidy vet test clean dev
+.PHONY: run build tidy vet test clean dev db-up db-down db-reset db-psql
 
 dev: run
 

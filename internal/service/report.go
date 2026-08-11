@@ -98,13 +98,14 @@ func parseMetric(text string) reportMetric {
 
 // parseItemFilter mencoba mengekstrak nama item dari query untuk filtering
 // Contoh: "Analisa konsumsi popok 01/08 hingga 11/08" → "popok"
+// Contoh: "stok kecap" → "kecap"
 func parseItemFilter(text string) string {
 	t := strings.ToLower(text)
-
+	
 	// Cek pattern analisa + item + tanggal
 	re := `analisa(?:\s+konsumsi|\s+analisis)?\s+([a-zA-Z0-9\s]+?)(?:\s+\d{1,2}/\d{1,2})`
 	matches := regexp.MustCompile(re).FindStringSubmatch(t)
-
+	
 	if len(matches) >= 2 {
 		itemName := strings.TrimSpace(matches[1])
 		// Filter out common words yang bukan nama item
@@ -112,7 +113,19 @@ func parseItemFilter(text string) string {
 			return itemName
 		}
 	}
-
+	
+	// Cek pattern stok + item atau barang + item
+	re = `(?:stok|barang|persediaan)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| Hari ini| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
+	matches = regexp.MustCompile(re).FindStringSubmatch(t)
+	
+	if len(matches) >= 2 {
+		itemName := strings.TrimSpace(matches[1])
+		// Filter out common question words
+		if !anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja") {
+			return itemName
+		}
+	}
+	
 	return ""
 }
 
@@ -228,12 +241,37 @@ func (a *Agent) handleReport(ctx context.Context, msg entity.IncomingMessage) er
 
 	// Stok saat ini: tanpa konteks waktu.
 	if metric == metricStock {
-		items, err := a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+		// Extract item filter untuk query stok spesifik per item
+		itemFilter := parseItemFilter(msg.Text)
+		
+		var items []domain.Inventory
+		var err error
+		
+		if itemFilter != "" {
+			// Query spesifik item yang diminta
+			items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
+			if err != nil {
+				a.log.ErrorContext(ctx, "gagal query stok", "err", err)
+				return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+			}
+			// Filter items yang match dengan itemFilter
+			filteredItems := make([]domain.Inventory, 0)
+			for _, item := range items {
+				if strings.Contains(strings.ToLower(item.ItemName), strings.ToLower(itemFilter)) {
+					filteredItems = append(filteredItems, item)
+				}
+			}
+			items = filteredItems
+		} else {
+			// Query semua stok
+			items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
+			if err != nil {
+				a.log.ErrorContext(ctx, "gagal query stok", "err", err)
+				return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+			}
 		}
-		return a.reply(ctx, msg.ChatID, formatStock(items))
+		
+		return a.reply(ctx, msg.ChatID, formatStock(items, itemFilter))
 	}
 
 	p := parsePeriod(msg.Text)
@@ -321,12 +359,19 @@ func writeLine(b *strings.Builder, label string, amount float64) {
 	fmt.Fprintf(b, "%s: Rp%s\n", label, formatRupiah(amount))
 }
 
-func formatStock(items []domain.Inventory) string {
+func formatStock(items []domain.Inventory, itemFilter string) string {
 	if len(items) == 0 {
+		if itemFilter != "" {
+			return fmt.Sprintf("Tidak ada stok untuk \"%s\".", itemFilter)
+		}
 		return "Belum ada barang di inventaris."
 	}
 	var b strings.Builder
-	b.WriteString("Stok saat ini:\n")
+	if itemFilter != "" {
+		fmt.Fprintf(&b, "Stok saat ini (%s):\n", itemFilter)
+	} else {
+		b.WriteString("Stok saat ini:\n")
+	}
 	for _, it := range items {
 		fmt.Fprintf(&b, "- %s: %g %s\n", it.ItemName, it.StockQty, it.Unit)
 	}

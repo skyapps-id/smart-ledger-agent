@@ -442,8 +442,15 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 	}
 
 	// Calculate consumption rate dan periode pemakaian
+	// Gunakan durasi dari periode analisa (to - from) untuk daily rate yang lebih akurat
 	for _, data := range itemsMap {
-		if !data.firstInDate.IsZero() && !data.lastOutDate.IsZero() && data.totalOut > 0 {
+		// Durasi periode analisa dalam hari
+		analysisDuration := to.Sub(from).Hours() / 24
+		
+		if analysisDuration > 0 && data.totalOut > 0 {
+			data.daysInUse = analysisDuration
+		} else if !data.firstInDate.IsZero() && !data.lastOutDate.IsZero() && data.totalOut > 0 {
+			// Fallback ke durasi actual transaksi bila periode analisa tidak valid
 			duration := data.lastOutDate.Sub(data.firstInDate).Hours() / 24
 			if duration > 0 {
 				data.daysInUse = duration
@@ -471,33 +478,44 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 
 		fmt.Fprintf(&b, "📦 %s:\n", name)
 		fmt.Fprintf(&b, "   Stok masuk: %g %s\n", data.totalIn, data.unit)
-
+		
 		if data.totalOut > 0 {
-			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n",
+			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n", 
 				data.totalOut, data.unit, (data.totalOut/data.totalIn)*100)
-
+			
 			if data.daysInUse > 0 {
 				dailyRate := data.totalOut / data.daysInUse
-				fmt.Fprintf(&b, "   Durasi pemakaian: %.0f hari (%s → %s)\n",
+				fmt.Fprintf(&b, "   Periode analisa: %.0f hari (%s → %s)\n", 
 					data.daysInUse,
-					data.firstInDate.Format("02/01/2006"),
-					data.lastOutDate.Format("02/01/2006"))
-				fmt.Fprintf(&b, "   Rate konsumsi: %.1f %s/hari\n", dailyRate, data.unit)
-
+					from.Format("02/01/2006"),
+					to.Format("02/01/2006"))
+				fmt.Fprintf(&b, "   Rate konsumsi: %.2f %s/hari\n", dailyRate, data.unit)
+				
+				// Tampilkan range tanggal transaksi actual bila berbeda dari periode analisa
+				if !data.firstInDate.IsZero() && !data.lastOutDate.IsZero() {
+					fmt.Fprintf(&b, "   Transaksi: %s → %s\n",
+						data.firstInDate.Format("02/01/2006"),
+						data.lastOutDate.Format("02/01/2006"))
+				}
+				
 				// Estimasi kapan stok habis (bila ada sisa)
 				remaining := data.totalIn - data.totalOut
 				if remaining > 0 && dailyRate > 0 {
 					daysUntilEmpty := remaining / dailyRate
 					estimatedEmpty := to.AddDate(0, 0, int(daysUntilEmpty))
-					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s)\n",
-						remaining, data.unit, estimatedEmpty.Format("02/01/2006"))
+					timeToEmptyStr := formatDuration(daysUntilEmpty)
+					if daysUntilEmpty < 1 {
+						timeToEmptyStr = fmt.Sprintf("%.0f jam", daysUntilEmpty*24)
+					}
+					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s, %s dari sekarang)\n", 
+						remaining, data.unit, estimatedEmpty.Format("02/01/2006"), timeToEmptyStr)
 				} else if remaining > 0 {
 					fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)
 				}
 			}
 		} else {
 			fmt.Fprintf(&b, "   Belum ada pemakaian\n")
-
+			
 			remaining := data.totalIn - data.totalOut
 			if remaining > 0 {
 				fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)

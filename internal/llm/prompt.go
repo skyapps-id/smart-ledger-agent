@@ -43,6 +43,16 @@ Aturan "affects_stock" (HANYA untuk EXPENSE):
 Konversi unit:
 - Ubah kemasan grosir ke unit eceran terbesar. Contoh "1 dus isi 50pcs" -> quantity: 50, unit: "pcs", notes: "1 dus".
 
+Aturan ekstraksi quantity dan unit dari nama barang (PENTING):
+- Bila nama barang mengandung ukuran, pisahkan menjadi item_name, quantity, dan unit.
+- Contoh: "Air 250ml" -> item_name:"Air", quantity:250, unit:"ml"
+- Contoh: "Susu 1liter" -> item_name:"Susu", quantity:1, unit:"liter"
+- Contoh: "Kopi 100gr" -> item_name:"Kopi", quantity:100, unit:"gr"
+- Contoh: "Teh 2kg" -> item_name:"Teh", quantity:2, unit:"kg"
+- Contoh: "Minyak 500ml" -> item_name:"Minyak", quantity:500, unit:"ml"
+- Pattern yang didukut: (angka)(unit) seperti "250ml", "1liter", "100gr", "2kg", "500ml", "1.5liter".
+- Bila tidak ada ukuran di nama barang, gunakan quantity:1, unit:"pcs".
+
 Aturan tanggal (PENTING):
 - Ekstrak tanggal transaksi dari pesan bila disebutkan secara eksplisit.
 - Kata kunci tanggal: "kemarin", "hari ini", "besok", "lusa", atau format tanggal eksplisit.
@@ -91,6 +101,7 @@ Field wajib: type, category, item_name, quantity, unit, amount, affects_stock, n
 Contoh keluaran:
 {"type":"EXPENSE","category":"MINUMAN","item_name":"susu uht","quantity":50,"unit":"pcs","amount":500000,"affects_stock":true,"notes":"1 dus","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"SEMBAKO","item_name":"beras","quantity":5,"unit":"kg","amount":75000,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"EXPENSE","category":"MINUMAN","item_name":"Air","quantity":250,"unit":"ml","amount":45000,"affects_stock":true,"notes":"","transaction_date":"2025-07-01","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2025-08-10","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"2025-08-09","consumption_date":"","total_consumption":0}
 {"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":"2025-08-01","consumption_date":"","total_consumption":0}

@@ -1,0 +1,8 @@
+bin/
+data/
+sessions/
+.env
+*.md
+.git/
+.gitignore
+Makefile

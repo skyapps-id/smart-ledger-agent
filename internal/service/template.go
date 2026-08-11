@@ -39,6 +39,20 @@ LAPORAN (tanya aja):
 > Analisa konsumsi bulan ini (rate & durasi pemakaian per barang)
 > Analisa konsumsi popok 01/08 hingga 11/08 (analisa per item + custom tanggal)
 
+QUERY STOK (semua variasi):
+> stok
+> sisa
+> persediaan
+> inventaris
+> persedian (dengan typo)
+> inventori (dengan typo)
+> stok air (filter per item)
+> sisa kecap (filter per item)
+> barang popok (filter per item)
+> persediaan susu (filter per item)
+> daftar barang (semua stok)
+> barang saya apa aja (semua stok)
+
 Tips:
 - Sebut nominal (50rb / 500k / 5jt) -> tercatat pengeluaran.
 - Sebut grosir (1 dus isi 50pcs) -> dikonversi otomatis.

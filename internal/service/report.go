@@ -7,8 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"smart-ledger-agent/internal/domain"
 	"smart-ledger-agent/internal/entity"
+	"smart-ledger-agent/internal/repository"
 	repomodel "smart-ledger-agent/internal/repository/model"
 )
 
@@ -28,6 +31,7 @@ func isReportQuery(text string) bool {
 		"pemakaian", "yang dipakai", "pakai apa", "dipakai",
 		"stok keluar", "stok masuk", "keluar apa",
 		"barang apa", "punya barang", "daftar stok", "daftar barang",
+		"analisa", "analisis", "rate konsumsi", "rate pemakaian",
 	}
 	for _, m := range markers {
 		if strings.Contains(t, m) {
@@ -56,10 +60,16 @@ const (
 	metricStock
 	metricExpenseByItem
 	metricConsumption
+	metricConsumptionAnalysis // analisa rate konsumsi dari data pembelian + pemakaian
 )
 
 func parseMetric(text string) reportMetric {
 	t := strings.ToLower(text)
+	// Analisa konsumsi dicek paling awal
+	if anyContains(t, "analisa", "analisis", "analisa pemakaian", "analisa konsumsi",
+		"rate konsumsi", "rate pemakaian", "kecepatan habis", "perhitungan habis") {
+		return metricConsumptionAnalysis
+	}
 	// Pemakaian dicek sebelum stok/expense karena "stok keluar" & "pakai"
 	// dapat bentrok dengan kata lain.
 	if anyContains(t, "pemakaian", "pemakai", "dipakai", "stok keluar",
@@ -167,6 +177,13 @@ func (a *Agent) handleReport(ctx context.Context, msg entity.IncomingMessage) er
 	p := parsePeriod(msg.Text)
 
 	switch metric {
+	case metricConsumptionAnalysis:
+		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, a.invRepo, msg.ChatID, p.from, p.to)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal generate analisa konsumsi", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal membuat analisa konsumsi.")
+		}
+		return a.reply(ctx, msg.ChatID, analysis)
 	case metricExpenseByItem:
 		items, err := a.txnRepo.WithTx(a.db).ExpenseByItem(ctx, msg.ChatID, p.from, p.to)
 		if err != nil {
@@ -296,4 +313,118 @@ func formatConsumption(p period, moves []repomodel.StockMovement) string {
 		fmt.Fprintf(&b, "- %s: -%g %s\n", name, qty[name], unit[name])
 	}
 	return b.String()
+}
+
+// generateConsumptionAnalysis membuat analisa konsumsi dari data pembelian + pemakaian
+func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repository.StockLogRepository, invRepo repository.InventoryRepository, chatID string, from, to time.Time) (string, error) {
+	// Query semua stock movements dalam periode
+	moves, err := logRepo.WithTx(db).MovementsByChat(ctx, chatID, from, to)
+	if err != nil {
+		return "", err
+	}
+
+	// Group data per item
+	type itemData struct {
+		name          string
+		unit          string
+		totalIn       float64
+		totalOut      float64
+		firstInDate   time.Time
+		lastOutDate   time.Time
+		daysInUse     float64
+	}
+
+	itemsMap := make(map[string]*itemData)
+	var order []string
+
+	for _, m := range moves {
+		if _, exists := itemsMap[m.ItemName]; !exists {
+			itemsMap[m.ItemName] = &itemData{
+				name: m.ItemName,
+				unit: m.Unit,
+			}
+			order = append(order, m.ItemName)
+		}
+		data := itemsMap[m.ItemName]
+
+		if m.ChangeType == domain.StockIn {
+			data.totalIn += m.Quantity
+			if data.firstInDate.IsZero() || m.CreatedAt.Before(data.firstInDate) {
+				data.firstInDate = m.CreatedAt
+			}
+		} else if m.ChangeType == domain.StockOut {
+			data.totalOut += m.Quantity
+			if data.lastOutDate.IsZero() || m.CreatedAt.After(data.lastOutDate) {
+				data.lastOutDate = m.CreatedAt
+			}
+		}
+	}
+
+	// Calculate consumption rate dan periode pemakaian
+	for _, data := range itemsMap {
+		if !data.firstInDate.IsZero() && !data.lastOutDate.IsZero() && data.totalOut > 0 {
+			duration := data.lastOutDate.Sub(data.firstInDate).Hours() / 24
+			if duration > 0 {
+				data.daysInUse = duration
+			}
+		}
+	}
+
+	if len(order) == 0 {
+		return "Belum ada data konsumsi " + formatPeriodRange(from, to) + ".", nil
+	}
+
+	// Format output analisa
+	var b strings.Builder
+	fmt.Fprintf(&b, "📊 Analisa Konsumsi (%s):\n\n", formatPeriodRange(from, to))
+
+	for _, name := range order {
+		data := itemsMap[name]
+
+		fmt.Fprintf(&b, "📦 %s:\n", name)
+		fmt.Fprintf(&b, "   Stok masuk: %g %s\n", data.totalIn, data.unit)
+		
+		if data.totalOut > 0 {
+			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n", 
+				data.totalOut, data.unit, (data.totalOut/data.totalIn)*100)
+			
+			if data.daysInUse > 0 {
+				dailyRate := data.totalOut / data.daysInUse
+				fmt.Fprintf(&b, "   Durasi pemakaian: %.0f hari (%s → %s)\n", 
+					data.daysInUse,
+					data.firstInDate.Format("02/01/2006"),
+					data.lastOutDate.Format("02/01/2006"))
+				fmt.Fprintf(&b, "   Rate konsumsi: %.1f %s/hari\n", dailyRate, data.unit)
+				
+				// Estimasi kapan stok habis (bila ada sisa)
+				remaining := data.totalIn - data.totalOut
+				if remaining > 0 && dailyRate > 0 {
+					daysUntilEmpty := remaining / dailyRate
+					estimatedEmpty := to.AddDate(0, 0, int(daysUntilEmpty))
+					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s)\n", 
+						remaining, data.unit, estimatedEmpty.Format("02/01/2006"))
+				} else if remaining > 0 {
+					fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)
+				}
+			}
+		} else {
+			fmt.Fprintf(&b, "   Belum ada pemakaian\n")
+			
+			remaining := data.totalIn - data.totalOut
+			if remaining > 0 {
+				fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)
+			}
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	return b.String(), nil
+}
+
+// formatPeriodRange format periode untuk display
+func formatPeriodRange(from, to time.Time) string {
+	if from.IsZero() {
+		return "sejauh ini"
+	}
+	return fmt.Sprintf("%s - %s", from.Format("02/01/2006"), to.Format("02/01/2006"))
 }

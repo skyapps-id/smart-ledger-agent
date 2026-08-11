@@ -35,6 +35,7 @@ LAPORAN (tanya aja):
 > Hari ini pakai apa aja? (stok keluar)
 > Ringkasan kemarin
 > Pemakaian barang minggu ini
+> Analisa konsumsi bulan ini (rate & durasi pemakaian per barang)
 
 Tips:
 - Sebut nominal (50rb / 500k / 5jt) -> tercatat pengeluaran.

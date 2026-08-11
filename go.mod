@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.4
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
 )

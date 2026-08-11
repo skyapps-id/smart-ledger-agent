@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/patrickmn/go-cache"
 	"gorm.io/gorm"
 
 	"smart-ledger-agent/internal/domain"
@@ -28,6 +30,7 @@ type Agent struct {
 	logRepo  repository.StockLogRepository
 	llm      llm.Extractor
 	waha     waha.Sender
+	invCache *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
 	log      *slog.Logger
 }
 
@@ -53,6 +56,7 @@ func NewAgent(
 		logRepo:  logRepo,
 		llm:      extractor,
 		waha:     sender,
+		invCache: cache.New(5*time.Minute, 10*time.Minute),
 		log:      logger,
 	}
 }
@@ -111,7 +115,11 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 	}
 
 	// 5. Path pencatatan: ekstraksi LLM -> persist.
-	ext, err := a.llm.Extract(ctx, msg.Text)
+	// Sertakan snapshot inventory (pakai cache) agar LLM meresolve nama barang
+	// ke item yang sudah ada di inventory chat ini.
+	items := a.cachedInventory(ctx, msg.ChatID)
+	invContext := llm.BuildInventoryPrompt(items)
+	ext, err := a.llm.Extract(ctx, msg.Text, invContext)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
 		return a.reply(ctx, msg.ChatID, "Maaf, gagal memahami pesan. Coba kirim ulang ya.")
@@ -214,6 +222,7 @@ func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, e
 
 	// Balasan berbeda tergantung apakah stok ikut tercatat.
 	if inv != nil {
+		a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berubah
 		return fmt.Sprintf(
 			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
 			ext.ItemName, ext.Quantity, ext.Unit,
@@ -271,6 +280,8 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 		return "", fmt.Errorf("kurangi stok: %w", err)
 	}
 
+	a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berkurang
+
 	// Sisa stok diperkirakan (best-effort untuk pesan).
 	remaining := inv.StockQty - ext.Quantity
 	return fmt.Sprintf(
@@ -285,6 +296,22 @@ func initReply(name string) string {
 		return InitSuccessMessage
 	}
 	return fmt.Sprintf(InitSuccessNamedMessage, name)
+}
+
+// cachedInventory mengembalikan snapshot inventory chat dari cache (TTL 5m)
+// atau dari DB bila cache miss. Dipakai sebagai konteks LLM agar LLM dapat
+// meresolve nama barang (mis. "susu" → "susu uht" di inventory).
+func (a *Agent) cachedInventory(ctx context.Context, chatID string) []domain.Inventory {
+	if cached, found := a.invCache.Get(chatID); found {
+		return cached.([]domain.Inventory)
+	}
+	items, err := a.invRepo.WithTx(a.db).ListByChat(ctx, chatID)
+	if err != nil {
+		a.log.ErrorContext(ctx, "gagal load inventory untuk cache", "err", err)
+		return nil
+	}
+	a.invCache.Set(chatID, items, cache.DefaultExpiration)
+	return items
 }
 
 // handleInfo merangkai pesan metadata sesi/chat untuk diagnostic.

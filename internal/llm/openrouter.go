@@ -19,7 +19,7 @@ import (
 
 // Extractor abstraksi klien ekstraksi LLM.
 type Extractor interface {
-	Extract(ctx context.Context, rawText string) (domain.Extraction, error)
+	Extract(ctx context.Context, rawText string, inventoryContext string) (domain.Extraction, error)
 }
 
 // New membuat klien OpenRouter dengan HTTP client default.
@@ -63,11 +63,18 @@ type chatResponse struct {
 }
 
 // Extract mengirim teks ke LLM dan mengembalikan entitas terstruktur.
-func (c *openRouterClient) Extract(ctx context.Context, rawText string) (domain.Extraction, error) {
+// inventoryContext adalah snapshot inventory chat (hasil BuildInventoryPrompt)
+// yang di-inject sebagai konteks tambahan ke system prompt.
+func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventoryContext string) (domain.Extraction, error) {
+	systemPrompt := SystemPrompt
+	if inventoryContext != "" {
+		systemPrompt += inventoryContext
+	}
+
 	body := chatRequest{
 		Model: c.cfg.Model,
 		Messages: []chatMessage{
-			{Role: "system", Content: SystemPrompt},
+			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: BuildUserPrompt(rawText)},
 		},
 		Temperature:    0,

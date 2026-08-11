@@ -13,6 +13,7 @@ A WhatsApp-based assistant for tracking personal expenses and inventory. Just ch
 - **Separate stock vs. cash.** Physical-goods expenses automatically increase inventory; stock consumption automatically decreases it.
 - **Opening balance support.** The `SALDO_AWAL` category records the starting cash position, shown separately from income but still counted in net balance.
 - **Greeting-aware.** The `NONE` type ensures that `halo` / `pagi` ("hi" / "morning") is never forced into a bogus transaction.
+- **Inventory-aware extraction.** Stock consumption messages (`ambil susu 2 pcs`) and repeat purchases automatically resolve item names against the ledger's existing inventory. The LLM receives an inventory snapshot as context — so `susu` matches `susu uht` without exact string comparison. Results are cached in-process with write-through invalidation.
 - **Group anti-spam.** The bot only responds when @-mentioned inside a group.
 - **Async worker pool.** Webhooks are acknowledged with `200 OK` in < 50ms; heavy processing (LLM, DB) runs in the background with retry/backoff.
 
@@ -66,6 +67,17 @@ flowchart TD
     P2 --> R
     P3 --> R
 ```
+
+### Inventory Context & Cache
+
+Before every LLM extraction, the agent loads the chat's current inventory snapshot and injects it into the system prompt. This allows the LLM to resolve ambiguous item names (e.g., `susu` → `susu uht`) against the ledger's actual inventory — avoiding "item not found" errors on stock consumption messages.
+
+| Component | Detail |
+| :--- | :--- |
+| **Context injection** | Inventory snapshot appended to LLM system prompt (capped at 20 items) |
+| **Cache library** | [`patrickmn/go-cache`](https://github.com/patrickmn/go-cache) — in-memory, zero infrastructure |
+| **Cache TTL** | 5 minutes with 10-minute cleanup interval |
+| **Invalidation** | Write-through — cached entry deleted on every `AddStock` / `DecreaseStock` |
 
 ---
 

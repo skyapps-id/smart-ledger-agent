@@ -1,6 +1,11 @@
 package llm
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"smart-ledger-agent/internal/domain"
+)
 
 // SystemPrompt berisi instruksi ketat untuk model agar selalu
 // mengembalikan JSON sesuai contract RFC §6.1.
@@ -48,5 +53,34 @@ func BuildUserPrompt(rawText string) string {
 	b.Grow(len(rawText) + 32)
 	b.WriteString("Ubah pesan ini menjadi JSON sesuai aturan:\n")
 	b.WriteString(strings.TrimSpace(rawText))
+	return b.String()
+}
+
+// BuildInventoryPrompt menyusun snapshot inventory chat (paling banyak 20 item)
+// untuk di-inject sebagai system context. Membantu LLM meresolve nama barang
+// yang mirip dengan item yang sudah ada di inventory. Mengembalikan string
+// kosong bila inventory kosong.
+func BuildInventoryPrompt(items []domain.Inventory) string {
+	if len(items) == 0 {
+		return ""
+	}
+
+	const maxItems = 20
+	truncated := items
+	suffix := ""
+	if len(items) > maxItems {
+		truncated = items[:maxItems]
+		suffix = fmt.Sprintf("\n... dan %d item lainnya (terpotong, stok tetap akurat di DB)", len(items)-maxItems)
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n[INVENTORY CHAT INI]\n")
+	for _, it := range truncated {
+		fmt.Fprintf(&b, "- %s (stok: %g %s)\n", it.ItemName, it.StockQty, it.Unit)
+	}
+	if suffix != "" {
+		b.WriteString(suffix)
+	}
+	b.WriteString("\n**ATURAN INVENTORY:** bila user menyebut barang yang mirip dengan item di atas, gunakan **PERSIS** nama dari daftar inventory sebagai item_name. Jangan membuat nama baru untuk barang yang sudah ada di inventory.\n")
 	return b.String()
 }

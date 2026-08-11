@@ -33,19 +33,37 @@ Aturan "affects_stock" (HANYA untuk EXPENSE):
 Konversi unit:
 - Ubah kemasan grosir ke unit eceran terbesar. Contoh "1 dus isi 50pcs" -> quantity: 50, unit: "pcs", notes: "1 dus".
 
-Field wajib: type, category, item_name, quantity, unit, amount, affects_stock, notes.
+Aturan tanggal (PENTING):
+- Ekstrak tanggal transaksi dari pesan bila disebutkan secara eksplisit.
+- Kata kunci tanggal: "kemarin", "hari ini", "besok", "lusa", atau format tanggal eksplisit.
+- Format tanggal yang didukut:
+  * "25 Agustus 2025" atau "25 Agustus" -> "2025-08-25"
+  * "2025-08-25" (YYYY-MM-DD) -> "2025-08-25"  
+  * "25/08/2025" (DD/MM/YYYY) -> "2025-08-25"
+  * "11/08" atau "11/08/25" (DD/MM) -> "2025-08-11" (prioritas: DD/MM untuk format pendek)
+  * "11-08" atau "11-08-25" (DD-MM) -> "2025-08-11"
+- Untuk "kemarin": hitung tanggal hari ini dikurangi 1 hari, format "YYYY-MM-DD".
+- Untuk "hari ini": gunakan tanggal hari ini, format "YYYY-MM-DD".
+- Untuk "besok": hitung tanggal hari ini ditambah 1 hari, format "YYYY-MM-DD".
+- Bila TIDAK ada tanggal disebutkan, biarkan "transaction_date": "" (kosong).
+- Selalu gunakan tahun 2025 untuk perhitungan tanggal.
+- Untuk format ambigu seperti "11/08", gunakan format DD/MM (hari/bulan) yang umum di Indonesia.
+
+Field wajib: type, category, item_name, quantity, unit, amount, affects_stock, notes, transaction_date.
 - category: salah satu dari "GAJI","MAKAN","HARI_HARI","TAGIHAN","HOBBY","STOK_KELUAR","SALDO_AWAL","LAINNYA".
 - quantity: angka, default 1.
 - unit: "pcs","porsi","liter","pack", dll.
 - amount: angka bulat rupiah, default 0 untuk CONSUMPTION.
 - item_name: lowercase, trim.
+- transaction_date: string tanggal "YYYY-MM-DD" atau "" (kosong) bila tidak disebutkan.
 
 Contoh keluaran:
-{"type":"EXPENSE","category":"HARI_HARI","item_name":"susu uht","quantity":50,"unit":"pcs","amount":500000,"affects_stock":true,"notes":"1 dus"}
-{"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":""}
-{"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":""}
-{"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":""}
-{"type":"NONE","category":"LAINNYA","item_name":"","quantity":0,"unit":"","amount":0,"affects_stock":false,"notes":"sapaan/chitchat"}`
+{"type":"EXPENSE","category":"HARI_HARI","item_name":"susu uht","quantity":50,"unit":"pcs","amount":500000,"affects_stock":true,"notes":"1 dus","transaction_date":""}
+{"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2025-08-10"}
+{"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"2025-08-09"}
+{"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":"2025-08-01"}
+{"type":"EXPENSE","category":"MAKAN","item_name":"kopi","quantity":1,"unit":"pcs","amount":15000,"affects_stock":false,"notes":"","transaction_date":"2025-08-11"}
+{"type":"NONE","category":"LAINNYA","item_name":"","quantity":0,"unit":"","amount":0,"affects_stock":false,"notes":"sapaan/chitchat","transaction_date":""}`
 
 // BuildUserPrompt menyusun pesan user dengan teks asli pengirim.
 func BuildUserPrompt(rawText string) string {

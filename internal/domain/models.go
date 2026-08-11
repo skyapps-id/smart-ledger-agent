@@ -31,15 +31,16 @@ func (Chat) TableName() string { return "chats" }
 // ChatID = pemilik ledger (partition key). SenderPhone = pengirim asli
 // pesan tersebut (audit trail; di group bisa berbeda-beda per transaksi).
 type Transaction struct {
-	ID          int64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	ChatID      string          `gorm:"size:64;index" json:"chat_id"`
-	SenderPhone string          `gorm:"size:32" json:"sender_phone"`
-	Type        TransactionType `gorm:"size:16" json:"type"`
-	Category    string          `gorm:"size:32" json:"category"`
-	ItemName    string          `gorm:"size:128" json:"item_name"`
-	Amount      float64         `gorm:"type:numeric(15,2)" json:"amount"`
-	RawPayload  string          `gorm:"type:text" json:"raw_payload"`
-	CreatedAt   time.Time       `json:"created_at"`
+	ID             int64           `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID         string          `gorm:"size:64;index" json:"chat_id"`
+	SenderPhone    string          `gorm:"size:32" json:"sender_phone"`
+	Type           TransactionType `gorm:"size:16" json:"type"`
+	Category       string          `gorm:"size:32" json:"category"`
+	ItemName       string          `gorm:"size:128" json:"item_name"`
+	Amount         float64         `gorm:"type:numeric(15,2)" json:"amount"`
+	RawPayload     string          `gorm:"type:text" json:"raw_payload"`
+	TransactionDate time.Time      `gorm:"type:date" json:"transaction_date"` // tanggal transaksi (bisa beda dari created_at)
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 func (Transaction) TableName() string { return "transactions" }
@@ -79,14 +80,15 @@ func (StockLog) TableName() string { return "stock_logs" }
 // Extraction adalah contract JSON yang dikembalikan oleh LLM.
 // Sesuai RFC §5.1 dan §6.1.
 type Extraction struct {
-	Type         ExtractionType `json:"type"`
-	Category     string         `json:"category"`
-	ItemName     string         `json:"item_name"`
-	Quantity     float64        `json:"quantity"`
-	Unit         string         `json:"unit"`
-	Amount       float64        `json:"amount"`
-	AffectsStock bool           `json:"affects_stock"`
-	Notes        string         `json:"notes"`
+	Type           ExtractionType `json:"type"`
+	Category       string         `json:"category"`
+	ItemName       string         `json:"item_name"`
+	Quantity       float64        `json:"quantity"`
+	Unit           string         `json:"unit"`
+	Amount         float64        `json:"amount"`
+	AffectsStock   bool           `json:"affects_stock"`
+	Notes          string         `json:"notes"`
+	TransactionDate string        `json:"transaction_date,omitempty"` // format: "YYYY-MM-DD" atau kosong untuk hari ini
 }
 
 type ExtractionType string

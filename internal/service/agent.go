@@ -159,14 +159,20 @@ func (a *Agent) persist(ctx context.Context, msg entity.IncomingMessage, ext dom
 
 // handleIncome: catat transaksi pemasukan saja (RFC §5.1).
 func (a *Agent) handleIncome(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
+	txnDate, err := parseTransactionDate(ext.TransactionDate)
+	if err != nil {
+		return "", fmt.Errorf("format tanggal tidak valid: %w", err)
+	}
+	
 	txn := &domain.Transaction{
-		ChatID:      msg.ChatID,
-		SenderPhone: msg.UserPhone,
-		Type:        domain.TransactionIncome,
-		Category:    ext.Category,
-		ItemName:    ext.ItemName,
-		Amount:      ext.Amount,
-		RawPayload:  msg.Text,
+		ChatID:         msg.ChatID,
+		SenderPhone:    msg.UserPhone,
+		Type:           domain.TransactionIncome,
+		Category:       ext.Category,
+		ItemName:       ext.ItemName,
+		Amount:         ext.Amount,
+		RawPayload:     msg.Text,
+		TransactionDate: txnDate,
 	}
 	if err := a.txnRepo.WithTx(a.db).Create(ctx, txn); err != nil {
 		return "", fmt.Errorf("catat income: %w", err)
@@ -181,14 +187,20 @@ func (a *Agent) handleIncome(ctx context.Context, msg entity.IncomingMessage, ex
 func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
 	var inv *domain.Inventory
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txnDate, err := parseTransactionDate(ext.TransactionDate)
+		if err != nil {
+			return fmt.Errorf("format tanggal tidak valid: %w", err)
+		}
+		
 		txn := &domain.Transaction{
-			ChatID:      msg.ChatID,
-			SenderPhone: msg.UserPhone,
-			Type:        domain.TransactionExpense,
-			Category:    ext.Category,
-			ItemName:    ext.ItemName,
-			Amount:      ext.Amount,
-			RawPayload:  msg.Text,
+			ChatID:         msg.ChatID,
+			SenderPhone:    msg.UserPhone,
+			Type:           domain.TransactionExpense,
+			Category:       ext.Category,
+			ItemName:       ext.ItemName,
+			Amount:         ext.Amount,
+			RawPayload:     msg.Text,
+			TransactionDate: txnDate,
 		}
 		if err := a.txnRepo.WithTx(tx).Create(ctx, txn); err != nil {
 			return fmt.Errorf("catat expense: %w", err)
@@ -396,4 +408,59 @@ func insertThousands(s string) string {
 		return "-" + b.String()
 	}
 	return b.String()
+}
+
+// parseTransactionDate mengubah string tanggal dari ekstraksi LLM ke time.Time.
+// Jika string kosong, gunakan waktu saat ini (hari ini).
+// Format yang didukung: "YYYY-MM-DD", "DD/MM/YYYY", "DD/MM/YY", "DD/MM", "DD-MM".
+func parseTransactionDate(dateStr string) (time.Time, error) {
+	if dateStr == "" {
+		// Jika tidak ada tanggal yang disebutkan, gunakan tanggal hari ini
+		return time.Now(), nil
+	}
+	
+	// Try format YYYY-MM-DD dulu (standard ISO)
+	if parsed, err := time.Parse("2006-01-02", dateStr); err == nil {
+		return parsed, nil
+	}
+	
+	// Try format DD/MM/YYYY (format Indonesia)
+	if parsed, err := time.Parse("02/01/2006", dateStr); err == nil {
+		return parsed, nil
+	}
+	
+	// Try format DD/MM/YY (format pendek dengan 2 digit tahun)
+	if parsed, err := time.Parse("02/01/06", dateStr); err == nil {
+		// Tambahkan 2000 untuk tahun 2 digit (contoh: 25 -> 2025)
+		year := parsed.Year()
+		if year < 100 {
+			parsed = parsed.AddDate(2000 - year, 0, 0)
+		}
+		return parsed, nil
+	}
+	
+	// Try format DD/MM (hanya hari dan bulan, tahun di-set ke 2025)
+	if parsed, err := time.Parse("02/01", dateStr); err == nil {
+		// Set tahun ke 2025
+		parsed = time.Date(2025, parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
+		return parsed, nil
+	}
+	
+	// Try format DD-MM (hanya hari dan bulan dengan dash)
+	if parsed, err := time.Parse("02-01", dateStr); err == nil {
+		// Set tahun ke 2025
+		parsed = time.Date(2025, parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
+		return parsed, nil
+	}
+	
+	// Try format DD-MM-YY (dengan 2 digit tahun)
+	if parsed, err := time.Parse("02-01-06", dateStr); err == nil {
+		year := parsed.Year()
+		if year < 100 {
+			parsed = parsed.AddDate(2000 - year, 0, 0)
+		}
+		return parsed, nil
+	}
+	
+	return time.Now(), fmt.Errorf("format tanggal tidak dikenali: %s (gunakan DD/MM atau DD/MM/YYYY)", dateStr)
 }

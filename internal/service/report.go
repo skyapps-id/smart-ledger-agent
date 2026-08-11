@@ -100,11 +100,11 @@ func parseMetric(text string) reportMetric {
 // Contoh: "Analisa konsumsi popok 01/08 hingga 11/08" → "popok"
 func parseItemFilter(text string) string {
 	t := strings.ToLower(text)
-	
+
 	// Cek pattern analisa + item + tanggal
 	re := `analisa(?:\s+konsumsi|\s+analisis)?\s+([a-zA-Z0-9\s]+?)(?:\s+\d{1,2}/\d{1,2})`
 	matches := regexp.MustCompile(re).FindStringSubmatch(t)
-	
+
 	if len(matches) >= 2 {
 		itemName := strings.TrimSpace(matches[1])
 		// Filter out common words yang bukan nama item
@@ -112,7 +112,7 @@ func parseItemFilter(text string) string {
 			return itemName
 		}
 	}
-	
+
 	return ""
 }
 
@@ -131,37 +131,37 @@ func parseCustomDateRange(text string) *period {
 	// Pattern: DD/MM hingga DD/MM atau DD/MM sampai DD/MM atau DD/MM - DD/MM
 	re := `(\d{1,2})/(\d{1,2})\s*(?:hingga|sampai|-|\—)\s*(\d{1,2})/(\d{1,2})`
 	matches := regexp.MustCompile(re).FindStringSubmatch(text)
-	
+
 	if len(matches) < 5 {
 		return nil
 	}
-	
+
 	// matches[1] = hari from, matches[2] = bulan from
 	// matches[3] = hari to, matches[4] = bulan to
 	fromDay, _ := strconv.Atoi(matches[1])
 	fromMonth, _ := strconv.Atoi(matches[2])
 	toDay, _ := strconv.Atoi(matches[3])
 	toMonth, _ := strconv.Atoi(matches[4])
-	
+
 	year := time.Now().Year()
-	
+
 	fromDate := time.Date(year, time.Month(fromMonth), fromDay, 0, 0, 0, 0, time.Now().Location())
 	toDate := time.Date(year, time.Month(toMonth), toDay, 23, 59, 59, 0, time.Now().Location())
-	
+
 	label := fmt.Sprintf("%s - %s", fromDate.Format("02/01/2006"), toDate.Format("02/01/2006"))
-	
+
 	return &period{
-		from:   fromDate,
-		to:     toDate,
-		label:  label,
+		from:       fromDate,
+		to:         toDate,
+		label:      label,
 		itemFilter: "",
 	}
 }
 
 type period struct {
-	from   time.Time
-	to     time.Time
-	label  string
+	from       time.Time
+	to         time.Time
+	label      string
 	itemFilter string // filter analisa per item tertentu (opsional)
 }
 
@@ -236,7 +236,7 @@ func (a *Agent) handleReport(ctx context.Context, msg entity.IncomingMessage) er
 	}
 
 	p := parsePeriod(msg.Text)
-	
+
 	// Extract item filter untuk analisa spesifik per item
 	if metric == metricConsumptionAnalysis {
 		itemFilter := parseItemFilter(msg.Text)
@@ -405,13 +405,13 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 
 	// Group data per item
 	type itemData struct {
-		name          string
-		unit          string
-		totalIn       float64
-		totalOut      float64
-		firstInDate   time.Time
-		lastOutDate   time.Time
-		daysInUse     float64
+		name        string
+		unit        string
+		totalIn     float64
+		totalOut    float64
+		firstInDate time.Time
+		lastOutDate time.Time
+		daysInUse   float64
 	}
 
 	itemsMap := make(map[string]*itemData)
@@ -470,25 +470,25 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 
 		fmt.Fprintf(&b, "📦 %s:\n", name)
 		fmt.Fprintf(&b, "   Stok masuk: %g %s\n", data.totalIn, data.unit)
-		
+
 		if data.totalOut > 0 {
-			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n", 
+			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n",
 				data.totalOut, data.unit, (data.totalOut/data.totalIn)*100)
-			
+
 			if data.daysInUse > 0 {
 				dailyRate := data.totalOut / data.daysInUse
-				fmt.Fprintf(&b, "   Durasi pemakaian: %.0f hari (%s → %s)\n", 
+				fmt.Fprintf(&b, "   Durasi pemakaian: %.0f hari (%s → %s)\n",
 					data.daysInUse,
 					data.firstInDate.Format("02/01/2006"),
 					data.lastOutDate.Format("02/01/2006"))
 				fmt.Fprintf(&b, "   Rate konsumsi: %.1f %s/hari\n", dailyRate, data.unit)
-				
+
 				// Estimasi kapan stok habis (bila ada sisa)
 				remaining := data.totalIn - data.totalOut
 				if remaining > 0 && dailyRate > 0 {
 					daysUntilEmpty := remaining / dailyRate
 					estimatedEmpty := to.AddDate(0, 0, int(daysUntilEmpty))
-					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s)\n", 
+					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s)\n",
 						remaining, data.unit, estimatedEmpty.Format("02/01/2006"))
 				} else if remaining > 0 {
 					fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)
@@ -496,7 +496,7 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 			}
 		} else {
 			fmt.Fprintf(&b, "   Belum ada pemakaian\n")
-			
+
 			remaining := data.totalIn - data.totalOut
 			if remaining > 0 {
 				fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)

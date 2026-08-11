@@ -28,7 +28,7 @@ func isReportQuery(text string) bool {
 	}
 	markers := []string{
 		"berapa", "ringkas", "laporan", "riwayat", "rincian", "mutasi",
-		"sisa", "stok apa", "ada stok", "stok di", "stok dirumah",
+		"sisa", "stok apa", "ada stok", "stok di", "stok dirumah", "persediaan", "inventaris",
 		"per item", "per barang", "beli apa",
 		"pemakaian", "yang dipakai", "pakai apa", "dipakai",
 		"stok keluar", "stok masuk", "keluar apa",
@@ -41,7 +41,7 @@ func isReportQuery(text string) bool {
 		}
 	}
 	switch t {
-	case "stok", "pemasukan", "pengeluaran", "saldo", "mutasi", "ringkasan":
+	case "stok", "pemasukan", "pengeluaran", "saldo", "mutasi", "ringkasan", "persediaan", "inventaris":
 		return true
 	}
 	// Perintah tampil di awal kalimat.
@@ -115,15 +115,17 @@ func parseItemFilter(text string) string {
 	}
 	
 	// Cek pattern stok + item atau barang + item
-	re = `(?:stok|barang|persediaan)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| Hari ini| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
+	re = `(?:stok|barang|persediaan|inventaris)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
 	matches = regexp.MustCompile(re).FindStringSubmatch(t)
 	
 	if len(matches) >= 2 {
 		itemName := strings.TrimSpace(matches[1])
-		// Filter out common question words
-		if !anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja") {
-			return itemName
+		// Filter out common words dan question patterns
+		if anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja", "saya", "punya", "kami", "kita") {
+			return "" // Return empty untuk show all items
 		}
+		// Return item name untuk specific filter
+		return itemName
 	}
 	
 	return ""

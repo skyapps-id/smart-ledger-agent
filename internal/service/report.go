@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +96,26 @@ func parseMetric(text string) reportMetric {
 	return metricSummary
 }
 
+// parseItemFilter mencoba mengekstrak nama item dari query untuk filtering
+// Contoh: "Analisa konsumsi popok 01/08 hingga 11/08" → "popok"
+func parseItemFilter(text string) string {
+	t := strings.ToLower(text)
+	
+	// Cek pattern analisa + item + tanggal
+	re := `analisa(?:\s+konsumsi|\s+analisis)?\s+([a-zA-Z0-9\s]+?)(?:\s+\d{1,2}/\d{1,2})`
+	matches := regexp.MustCompile(re).FindStringSubmatch(t)
+	
+	if len(matches) >= 2 {
+		itemName := strings.TrimSpace(matches[1])
+		// Filter out common words yang bukan nama item
+		if !anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin") {
+			return itemName
+		}
+	}
+	
+	return ""
+}
+
 func anyContains(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if strings.Contains(s, sub) {
@@ -103,10 +125,44 @@ func anyContains(s string, subs ...string) bool {
 	return false
 }
 
+// parseCustomDateRange mencoba parse custom date range seperti "01/08 hingga 11/08"
+// Mengembalikan nil bila tidak ada pattern match
+func parseCustomDateRange(text string) *period {
+	// Pattern: DD/MM hingga DD/MM atau DD/MM sampai DD/MM atau DD/MM - DD/MM
+	re := `(\d{1,2})/(\d{1,2})\s*(?:hingga|sampai|-|\—)\s*(\d{1,2})/(\d{1,2})`
+	matches := regexp.MustCompile(re).FindStringSubmatch(text)
+	
+	if len(matches) < 5 {
+		return nil
+	}
+	
+	// matches[1] = hari from, matches[2] = bulan from
+	// matches[3] = hari to, matches[4] = bulan to
+	fromDay, _ := strconv.Atoi(matches[1])
+	fromMonth, _ := strconv.Atoi(matches[2])
+	toDay, _ := strconv.Atoi(matches[3])
+	toMonth, _ := strconv.Atoi(matches[4])
+	
+	year := time.Now().Year()
+	
+	fromDate := time.Date(year, time.Month(fromMonth), fromDay, 0, 0, 0, 0, time.Now().Location())
+	toDate := time.Date(year, time.Month(toMonth), toDay, 23, 59, 59, 0, time.Now().Location())
+	
+	label := fmt.Sprintf("%s - %s", fromDate.Format("02/01/2006"), toDate.Format("02/01/2006"))
+	
+	return &period{
+		from:   fromDate,
+		to:     toDate,
+		label:  label,
+		itemFilter: "",
+	}
+}
+
 type period struct {
-	from  time.Time
-	to    time.Time
-	label string
+	from   time.Time
+	to     time.Time
+	label  string
+	itemFilter string // filter analisa per item tertentu (opsional)
 }
 
 // parsePeriod menerjemahkan ekspresi waktu Indonesia menjadi rentang [from, to].
@@ -116,28 +172,33 @@ func parsePeriod(text string) period {
 	t := strings.ToLower(text)
 	todayStart := startOfDay(now)
 
+	// Cek custom date range dulu (format: "01/08 hingga 11/08" atau "01/08 sampai 11/08")
+	if customRange := parseCustomDateRange(t); customRange != nil {
+		return *customRange
+	}
+
 	switch {
 	case strings.Contains(t, "bulan lalu"):
 		firstThis := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		from := firstThis.AddDate(0, -1, 0)
-		return period{from, firstThis.Add(-time.Second), formatMonth(from)}
+		return period{from: from, to: firstThis.Add(-time.Second), label: formatMonth(from), itemFilter: ""}
 	case strings.Contains(t, "minggu lalu"):
 		thisWeek := startOfWeek(now)
 		from := thisWeek.AddDate(0, 0, -7)
-		return period{from, thisWeek.Add(-time.Second), "minggu lalu"}
+		return period{from: from, to: thisWeek.Add(-time.Second), label: "minggu lalu", itemFilter: ""}
 	case strings.Contains(t, "kemarin"):
 		from := todayStart.AddDate(0, 0, -1)
-		return period{from, from.Add(24*time.Hour - time.Second), formatDay(from)}
+		return period{from: from, to: from.Add(24*time.Hour - time.Second), label: formatDay(from), itemFilter: ""}
 	case strings.Contains(t, "minggu ini"):
 		from := startOfWeek(now)
-		return period{from, now, "minggu ini"}
+		return period{from: from, to: now, label: "minggu ini", itemFilter: ""}
 	case strings.Contains(t, "bulan ini"):
 		from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		return period{from, now, "bulan ini"}
+		return period{from: from, to: now, label: "bulan ini", itemFilter: ""}
 	case strings.Contains(t, "semua") || strings.Contains(t, "seluruh") || strings.Contains(t, "sejauh"):
-		return period{time.Time{}, now, "sejauh ini"}
+		return period{from: time.Time{}, to: now, label: "sejauh ini", itemFilter: ""}
 	default:
-		return period{todayStart, now, "hari ini (" + formatDay(todayStart) + ")"}
+		return period{from: todayStart, to: now, label: "hari ini (" + formatDay(todayStart) + ")", itemFilter: ""}
 	}
 }
 
@@ -175,10 +236,18 @@ func (a *Agent) handleReport(ctx context.Context, msg entity.IncomingMessage) er
 	}
 
 	p := parsePeriod(msg.Text)
+	
+	// Extract item filter untuk analisa spesifik per item
+	if metric == metricConsumptionAnalysis {
+		itemFilter := parseItemFilter(msg.Text)
+		if itemFilter != "" {
+			p.itemFilter = itemFilter
+		}
+	}
 
 	switch metric {
 	case metricConsumptionAnalysis:
-		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, a.invRepo, msg.ChatID, p.from, p.to)
+		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, a.invRepo, msg.ChatID, p.from, p.to, p.itemFilter)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal generate analisa konsumsi", "err", err)
 			return a.reply(ctx, msg.ChatID, "Maaf, gagal membuat analisa konsumsi.")
@@ -316,11 +385,22 @@ func formatConsumption(p period, moves []repomodel.StockMovement) string {
 }
 
 // generateConsumptionAnalysis membuat analisa konsumsi dari data pembelian + pemakaian
-func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repository.StockLogRepository, invRepo repository.InventoryRepository, chatID string, from, to time.Time) (string, error) {
+func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repository.StockLogRepository, invRepo repository.InventoryRepository, chatID string, from, to time.Time, itemFilter string) (string, error) {
 	// Query semua stock movements dalam periode
 	moves, err := logRepo.WithTx(db).MovementsByChat(ctx, chatID, from, to)
 	if err != nil {
 		return "", err
+	}
+
+	// Filter by item name jika specified
+	if itemFilter != "" {
+		filteredMoves := make([]repomodel.StockMovement, 0)
+		for _, m := range moves {
+			if strings.Contains(strings.ToLower(m.ItemName), strings.ToLower(itemFilter)) {
+				filteredMoves = append(filteredMoves, m)
+			}
+		}
+		moves = filteredMoves
 	}
 
 	// Group data per item
@@ -371,12 +451,19 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 	}
 
 	if len(order) == 0 {
+		if itemFilter != "" {
+			return fmt.Sprintf("Belum ada data konsumsi untuk \"%s\" %s.", itemFilter, formatPeriodRange(from, to)), nil
+		}
 		return "Belum ada data konsumsi " + formatPeriodRange(from, to) + ".", nil
 	}
 
 	// Format output analisa
 	var b strings.Builder
-	fmt.Fprintf(&b, "📊 Analisa Konsumsi (%s):\n\n", formatPeriodRange(from, to))
+	if itemFilter != "" {
+		fmt.Fprintf(&b, "📊 Analisa Konsumsi: %s (%s):\n\n", itemFilter, formatPeriodRange(from, to))
+	} else {
+		fmt.Fprintf(&b, "📊 Analisa Konsumsi (%s):\n\n", formatPeriodRange(from, to))
+	}
 
 	for _, name := range order {
 		data := itemsMap[name]

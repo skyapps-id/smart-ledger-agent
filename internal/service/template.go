@@ -36,6 +36,7 @@ LAPORAN (tanya aja):
 > Ringkasan kemarin
 > Pemakaian barang minggu ini
 > Analisa konsumsi bulan ini (rate & durasi pemakaian per barang)
+> Analisa konsumsi popok 01/08 hingga 11/08 (analisa per item + custom tanggal)
 
 Tips:
 - Sebut nominal (50rb / 500k / 5jt) -> tercatat pengeluaran.

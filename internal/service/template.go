@@ -37,12 +37,12 @@ Tips:
 
 Ketik "bantuan" kapan saja untuk lihat panduan ini lagi.
 Ketik "info" untuk melihat detail sesi/chat (debugging).
-Init ulang dengan nama: init <nama ledger> (mis. "init project bangunan 1").`
+Init ulang dengan nama: init <nama ledger> (mis. "init personal cash flow").`
 
 // PreInitMessage dikirim ke pengirim yang belum melakukan init eksplisit.
 const PreInitMessage = `Halo! Akun kamu belum aktif.
 Ketik "init" untuk mulai mengaktifkan pencatatan keuangan & inventaris.
-Opsional: "init <nama ledger>" (mis. "init project bangunan 1").`
+Opsional: "init <nama ledger>" (mis. "init personal cash flow").`
 
 // InitSuccessMessage dikirim saat pengirim berhasil melakukan init.
 const InitSuccessMessage = `Akun aktif! Selamat datang.
@@ -65,8 +65,8 @@ Ketik "bantuan" untuk lihat cara pakai, atau langsung kirim pesan seperti "beli 
 // Contoh:
 //
 //	"init"                -> (true, "")
-//	"init project bangunan 1" -> (true, "project bangunan 1")
-//	`init "project bangunan 1"` -> (true, "project bangunan 1")   // quote dikupas
+//	"init personal cash flow" -> (true, "personal cash flow")
+//	`init "personal cash flow"` -> (true, "personal cash flow")   // quote dikupas
 //	"mulai kas rumah"      -> (true, "kas rumah")
 //	"bantuan"              -> (false, "")
 func parseInitCommand(text string) (bool, string) {

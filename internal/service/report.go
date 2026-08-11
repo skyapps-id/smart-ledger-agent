@@ -129,27 +129,28 @@ func anyContains(s string, subs ...string) bool {
 // Mengembalikan nil bila tidak ada pattern match
 func parseCustomDateRange(text string) *period {
 	// Pattern: DD/MM hingga DD/MM atau DD/MM sampai DD/MM atau DD/MM - DD/MM
-	re := `(\d{1,2})/(\d{1,2})\s*(?:hingga|sampai|-|\—)\s*(\d{1,2})/(\d{1,2})`
+	// Use regular dash instead of em dash to avoid regex escape issues
+	re := `(\d{1,2})/(\d{1,2})\s*(?:hingga|sampai|-)\s*(\d{1,2})/(\d{1,2})`
 	matches := regexp.MustCompile(re).FindStringSubmatch(text)
-
+	
 	if len(matches) < 5 {
 		return nil
 	}
-
+	
 	// matches[1] = hari from, matches[2] = bulan from
 	// matches[3] = hari to, matches[4] = bulan to
 	fromDay, _ := strconv.Atoi(matches[1])
 	fromMonth, _ := strconv.Atoi(matches[2])
 	toDay, _ := strconv.Atoi(matches[3])
 	toMonth, _ := strconv.Atoi(matches[4])
-
+	
 	year := time.Now().Year()
-
+	
 	fromDate := time.Date(year, time.Month(fromMonth), fromDay, 0, 0, 0, 0, time.Now().Location())
 	toDate := time.Date(year, time.Month(toMonth), toDay, 23, 59, 59, 0, time.Now().Location())
-
+	
 	label := fmt.Sprintf("%s - %s", fromDate.Format("02/01/2006"), toDate.Format("02/01/2006"))
-
+	
 	return &period{
 		from:       fromDate,
 		to:         toDate,

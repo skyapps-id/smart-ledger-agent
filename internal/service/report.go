@@ -85,7 +85,7 @@ func parseMetric(text string) reportMetric {
 		"rincian belanja", "beli apa") {
 		return metricExpenseByItem
 	}
-	if anyContains(t, "stok", "sisa", "persediaan", "inventaris",
+	if anyContains(t, "stok", "sisa", "persediaan", "persedian", "inventaris", "inventori",
 		"barang apa", "punya barang", "daftar barang", "ada barang") {
 		return metricStock
 	}
@@ -117,7 +117,7 @@ func parseItemFilter(text string) string {
 	}
 	
 	// Cek pattern stok + item atau barang + item
-	re = `(?:stok|barang|persediaan|inventaris)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
+	re = `(?:stok|barang|persediaan|persedian|inventaris|inventori)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
 	matches = regexp.MustCompile(re).FindStringSubmatch(t)
 	
 	if len(matches) >= 2 {

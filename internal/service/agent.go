@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -163,15 +164,15 @@ func (a *Agent) handleIncome(ctx context.Context, msg entity.IncomingMessage, ex
 	if err != nil {
 		return "", fmt.Errorf("format tanggal tidak valid: %w", err)
 	}
-	
+
 	txn := &domain.Transaction{
-		ChatID:         msg.ChatID,
-		SenderPhone:    msg.UserPhone,
-		Type:           domain.TransactionIncome,
-		Category:       ext.Category,
-		ItemName:       ext.ItemName,
-		Amount:         ext.Amount,
-		RawPayload:     msg.Text,
+		ChatID:          msg.ChatID,
+		SenderPhone:     msg.UserPhone,
+		Type:            domain.TransactionIncome,
+		Category:        ext.Category,
+		ItemName:        ext.ItemName,
+		Amount:          ext.Amount,
+		RawPayload:      msg.Text,
 		TransactionDate: txnDate,
 	}
 	if err := a.txnRepo.WithTx(a.db).Create(ctx, txn); err != nil {
@@ -191,16 +192,27 @@ func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, e
 		if err != nil {
 			return fmt.Errorf("format tanggal tidak valid: %w", err)
 		}
-		
+
+		var consumptionDate *time.Time
+		if ext.ConsumptionDate != "" {
+			cd, err := parseTransactionDate(ext.ConsumptionDate)
+			if err != nil {
+				return fmt.Errorf("format tanggal konsumsi tidak valid: %w", err)
+			}
+			consumptionDate = &cd
+		}
+
 		txn := &domain.Transaction{
-			ChatID:         msg.ChatID,
-			SenderPhone:    msg.UserPhone,
-			Type:           domain.TransactionExpense,
-			Category:       ext.Category,
-			ItemName:       ext.ItemName,
-			Amount:         ext.Amount,
-			RawPayload:     msg.Text,
+			ChatID:          msg.ChatID,
+			SenderPhone:     msg.UserPhone,
+			Type:            domain.TransactionExpense,
+			Category:        ext.Category,
+			ItemName:        ext.ItemName,
+			Amount:          ext.Amount,
+			RawPayload:      msg.Text,
 			TransactionDate: txnDate,
+			ConsumptionDate: consumptionDate,
+			TotalConsumed:   ext.TotalConsumption,
 		}
 		if err := a.txnRepo.WithTx(tx).Create(ctx, txn); err != nil {
 			return fmt.Errorf("catat expense: %w", err)
@@ -235,17 +247,104 @@ func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, e
 	// Balasan berbeda tergantung apakah stok ikut tercatat.
 	if inv != nil {
 		a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berubah
-		return fmt.Sprintf(
+
+		// Parse conversion info dari notes (misal "100g per pcs")
+		perUnitQty, perUnitUnit := parseConversionInfo(ext.Notes)
+
+		// Hitung total pembelian dalam satuan dasar
+		totalPurchased := ext.Quantity
+		if perUnitQty > 0 {
+			totalPurchased = ext.Quantity * perUnitQty
+		}
+
+		// Tampilkan analisa konsumsi bila ada consumption_date dan total_consumption
+		var consumptionAnalysis string
+		if ext.ConsumptionDate != "" && ext.TotalConsumption > 0 {
+			txnDate, _ := parseTransactionDate(ext.TransactionDate)
+			consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
+			if err == nil {
+				duration := consumptionDate.Sub(txnDate).Hours() / 24 // durasi dalam hari
+				if duration > 0 {
+					// Hitung rate konsumsi per hari
+					dailyRate := ext.TotalConsumption / duration
+					percentageConsumed := (ext.TotalConsumption / totalPurchased) * 100
+
+					unitDisplay := perUnitUnit
+					if unitDisplay == "" {
+						unitDisplay = ext.Unit
+					}
+
+					consumptionAnalysis = fmt.Sprintf(
+						" Analisa konsumsi: %g dari %g %s (%.0f%%) habis dalam %.0f hari (%s → %s). Rate: %.1f %s/hari.",
+						ext.TotalConsumption, totalPurchased, unitDisplay,
+						percentageConsumed, duration,
+						txnDate.Format("02/01/2006"), consumptionDate.Format("02/01/2006"),
+						dailyRate, unitDisplay,
+					)
+				}
+			}
+		} else if ext.ConsumptionDate != "" {
+			// Hanya tanggal habis tanpa total_consumption
+			txnDate, _ := parseTransactionDate(ext.TransactionDate)
+			consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
+			if err == nil {
+				duration := consumptionDate.Sub(txnDate).Hours() / 24
+				if duration > 0 {
+					consumptionAnalysis = fmt.Sprintf(
+						" Estimasi habis dalam: %.0f hari (%s → %s: %s).",
+						duration, txnDate.Format("02/01/2006"),
+						consumptionDate.Format("02/01/2006"), formatDuration(duration),
+					)
+				}
+			}
+		}
+
+		// Build reply utama
+		baseReply := fmt.Sprintf(
 			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
 			ext.ItemName, ext.Quantity, ext.Unit,
 			formatRupiah(ext.Amount), ext.Category,
 			inv.StockQty, inv.Unit,
-		), nil
+		)
+
+		if consumptionAnalysis != "" {
+			baseReply += consumptionAnalysis
+		}
+
+		return baseReply, nil
 	}
-	return fmt.Sprintf(
+
+	baseReply := fmt.Sprintf(
 		"Pengeluaran tercatat: %s sebesar Rp%s (%s).",
 		ext.ItemName, formatRupiah(ext.Amount), ext.Category,
-	), nil
+	)
+
+	// Analisa konsumsi untuk non-stock items
+	if ext.ConsumptionDate != "" && ext.TotalConsumption > 0 {
+		txnDate, _ := parseTransactionDate(ext.TransactionDate)
+		consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
+		if err == nil {
+			duration := consumptionDate.Sub(txnDate).Hours() / 24
+			if duration > 0 {
+				dailyRate := ext.TotalConsumption / duration
+				baseReply += fmt.Sprintf(
+					" Analisa konsumsi: %g habis dalam %.0f hari. Rate: %.1f /hari.",
+					ext.TotalConsumption, duration, dailyRate,
+				)
+			}
+		}
+	} else if ext.ConsumptionDate != "" {
+		txnDate, _ := parseTransactionDate(ext.TransactionDate)
+		consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
+		if err == nil {
+			duration := consumptionDate.Sub(txnDate).Hours() / 24
+			if duration > 0 {
+				baseReply += fmt.Sprintf(" Estimasi habis dalam: %.0f hari.", duration)
+			}
+		}
+	}
+
+	return baseReply, nil
 }
 
 // handleConsumption: kurangi stok + log OUT (RFC §7.2). Tanpa record uang.
@@ -418,49 +517,115 @@ func parseTransactionDate(dateStr string) (time.Time, error) {
 		// Jika tidak ada tanggal yang disebutkan, gunakan tanggal hari ini
 		return time.Now(), nil
 	}
-	
+
 	// Try format YYYY-MM-DD dulu (standard ISO)
 	if parsed, err := time.Parse("2006-01-02", dateStr); err == nil {
 		return parsed, nil
 	}
-	
+
 	// Try format DD/MM/YYYY (format Indonesia)
 	if parsed, err := time.Parse("02/01/2006", dateStr); err == nil {
 		return parsed, nil
 	}
-	
+
 	// Try format DD/MM/YY (format pendek dengan 2 digit tahun)
 	if parsed, err := time.Parse("02/01/06", dateStr); err == nil {
 		// Tambahkan 2000 untuk tahun 2 digit (contoh: 25 -> 2025)
 		year := parsed.Year()
 		if year < 100 {
-			parsed = parsed.AddDate(2000 - year, 0, 0)
+			parsed = parsed.AddDate(2000-year, 0, 0)
 		}
 		return parsed, nil
 	}
-	
+
 	// Try format DD/MM (hanya hari dan bulan, tahun di-set ke 2025)
 	if parsed, err := time.Parse("02/01", dateStr); err == nil {
 		// Set tahun ke 2025
 		parsed = time.Date(2025, parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
 		return parsed, nil
 	}
-	
+
 	// Try format DD-MM (hanya hari dan bulan dengan dash)
 	if parsed, err := time.Parse("02-01", dateStr); err == nil {
 		// Set tahun ke 2025
 		parsed = time.Date(2025, parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
 		return parsed, nil
 	}
-	
+
 	// Try format DD-MM-YY (dengan 2 digit tahun)
 	if parsed, err := time.Parse("02-01-06", dateStr); err == nil {
 		year := parsed.Year()
 		if year < 100 {
-			parsed = parsed.AddDate(2000 - year, 0, 0)
+			parsed = parsed.AddDate(2000-year, 0, 0)
 		}
 		return parsed, nil
 	}
-	
+
 	return time.Now(), fmt.Errorf("format tanggal tidak dikenali: %s (gunakan DD/MM atau DD/MM/YYYY)", dateStr)
+}
+
+// formatDuration mengubah durasi dalam hari menjadi format yang mudah dibaca
+func formatDuration(days float64) string {
+	if days < 1 {
+		return "< 1 hari"
+	}
+	if days == 1 {
+		return "1 hari"
+	}
+	if days < 7 {
+		return fmt.Sprintf("%.0f hari", days)
+	}
+	if days < 30 {
+		weeks := days / 7
+		if weeks == 1 {
+			return "1 minggu"
+		}
+		return fmt.Sprintf("%.0f minggu", weeks)
+	}
+	months := days / 30
+	if months == 1 {
+		return "1 bulan"
+	}
+	return fmt.Sprintf("%.0f bulan", months)
+}
+
+// parseConversionInfo mengambil informasi konversi dari notes
+// Contoh: "100g per pcs" → (100, "g")
+// Contoh: "200ml per botol" → (200, "ml")
+// Contoh: "" → (0, "")
+func parseConversionInfo(notes string) (float64, string) {
+	if notes == "" {
+		return 0, ""
+	}
+
+	// Cari pattern angka + unit + "per" + unit packaging
+	// Menggunakan regex sederhana
+	lowerNotes := strings.ToLower(notes)
+
+	// Pattern 1: "100g per pcs", "200ml per botol", "1kg per pack"
+	re := `(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*per\s*([a-zA-Z]+)`
+	matches := regexp.MustCompile(re).FindStringSubmatch(lowerNotes)
+
+	if len(matches) >= 3 {
+		// matches[0] = full match
+		// matches[1] = number (100, 200, etc)
+		// matches[2] = unit (g, ml, kg, etc)
+		// matches[3] = packaging unit (pcs, botol, pack, etc)
+
+		quantity, err := strconv.ParseFloat(matches[1], 64)
+		if err == nil {
+			unit := matches[2]
+			// Normalize unit
+			if unit == "gram" || unit == "g" {
+				unit = "g"
+			} else if unit == "mililiter" || unit == "mililitre" || unit == "ml" {
+				unit = "ml"
+			} else if unit == "kilogram" || unit == "kg" {
+				unit = "kg"
+			}
+			return quantity, unit
+		}
+	}
+
+	return 0, ""
 }

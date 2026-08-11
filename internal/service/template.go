@@ -22,6 +22,11 @@ PEMAKAIAN STOK:
 > Ambil susu UHT 2 pcs
 > Pakai air mineral 1 pcs
 
+ANALISA KONSUMSI (ADVANCED):
+> Kopi 100g beli 10pcs tanggal 11/08 tapi habis 500g di 30/08
+> Susu 200ml beli 12 botol tanggal 01/08 habis 1 liter di 20/08
+> Beras 5kg beli 2 karung tanggal 05/08 habis 3kg di 25/08
+
 LAPORAN (tanya aja):
 > Pengeluaran hari ini berapa?
 > Total pemasukan bulan ini
@@ -29,11 +34,13 @@ LAPORAN (tanya aja):
 > Barang saya apa aja? (sisa stok)
 > Hari ini pakai apa aja? (stok keluar)
 > Ringkasan kemarin
+> Pemakaian barang minggu ini
 
 Tips:
 - Sebut nominal (50rb / 500k / 5jt) -> tercatat pengeluaran.
 - Sebut grosir (1 dus isi 50pcs) -> dikonversi otomatis.
 - Tanpa nominal (ambil/pakai) -> tercatat pemakaian stok.
+- Analisa konsumsi -> otomatis hitung durasi & rate pemakaian per hari.
 
 Ketik "bantuan" kapan saja untuk lihat panduan ini lagi.
 Ketik "info" untuk melihat detail sesi/chat (debugging).

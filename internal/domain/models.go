@@ -19,6 +19,7 @@ const (
 type Chat struct {
 	ID          int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	ChatID      string    `gorm:"size:64;uniqueIndex" json:"chat_id"`
+	Name        string    `gorm:"size:128" json:"name"` // label opsional, mis. "project bangunan 1"; di-set via `init <nama>`
 	Initialized bool      `gorm:"default:false" json:"initialized"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

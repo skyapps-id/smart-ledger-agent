@@ -160,7 +160,9 @@ Sistem wajib membedakan dua konteks pesan berdasar suffix JID pada field `from`:
 Sistem menganut model **init eksplisit per chat**: sebuah chat harus diaktifkan sebelum pemrosesan pesan apapun.
 
 - **Pre-init Gate:** Selama `chats.initialized = false`, SEMUA pesan (selain command init/info) hanya membalas pesan *Pre-Init* yang meminta pengirim mengetik `init`. Tidak ada pencatatan/laporan yang diproses.
-- **Command Init:** Pesan bernilai (case-insensitive) `init`, `mulai`, `start`, `daftar`, atau `aktivasi` mengaktifkan chat (`initialized = true`) dan membalas konfirmasi. Idempoten — init berulang tidak mengubah status. Setiap chat di-init secara independen (DM terpisah dari group A, terpisah dari group B, dst.).
+- **Command Init (+ nama opsional):** Pesan bernilai (case-insensitive) `init`, `mulai`, `start`, `daftar`, atau `aktivasi` mengaktifkan chat (`initialized = true`) dan membalas konfirmasi. Idempoten — init berulang tidak mengubah status. Setiap chat di-init secara independen (DM terpisah dari group A, terpisah dari group B, dst.).
+  - **Nama ledger opsional:** segmen teks setelah keyword init dijadikan nama ledger yang disimpan di `chats.name`. Contoh: `init project bangunan 1` → name="project bangunan 1". Tanda kutip di awal/akhir otomatis dikupas: `init "kas rumah"` ≡ `init kas rumah`. Nama ditampilkan di command `info` (§5.5).
+  - **Rename via re-init:** bila chat sudah aktif dan user mengirim `init <nama baru>`, hanya nama yang diperbarui (status tetap aktif). Bila `init` tanpa argumen pada chat yang sudah aktif, cukup dibalas status.
 - **Keyword Bantuan (post-init):** Pesan `bantuan`, `bantu`, `panduan`, `menu`, `format`, `help` memicu pengiriman template format pencatatan tanpa efek samping.
 - **Command Info (diagnostic, selalu tersedia):** Pesan `info`, `sesi`, `session`, `identitas`, atau `debug` memicu balasan metadata sesi — berguna untuk debugging alur init/mention/group. Tersedia bahkan sebelum init. Isi balasan:
   - `Chat ID` — partition key ledger (`phone@c.us` / `id@g.us`)
@@ -228,6 +230,7 @@ LLM diwajibkan mengembalikan struktur data JSON valid tanpa elemen sintaks tamba
 #### Tabel Chat / Ledger (`chats`) — Rev. C
 - **`id`**: BigSerial (Primary Key)
 - **`chat_id`**: Varchar(64) (Unique — partition key ledger: `phone@c.us` / `id@g.us`)
+- **`name`**: Varchar(128) (Label opsional ledger, mis. "project bangunan 1"; di-set via `init <nama>`)
 - **`initialized`**: Boolean (Default `false` — status onboarding per-chat)
 - **`created_at`**: Timestamptz
 - **`updated_at`**: Timestamptz

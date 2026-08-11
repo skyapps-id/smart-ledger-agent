@@ -68,21 +68,31 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 		return a.reply(ctx, msg.ChatID, "Maaf, terjadi kendala. Coba lagi nanti.")
 	}
 
-	// 1. Init eksplisit: aktifkan ledger chat (idempoten).
-	if isInitCommand(msg.Text) {
+	// 1. Init eksplisit: aktifkan ledger chat (idempoten). Bila disertai nama,
+	// nama ledger di-set (mendukung pemberian nama saat init pertama maupun
+	// rename melalui re-init: `init <nama baru>`).
+	if ok, name := parseInitCommand(msg.Text); ok {
 		if !chat.Initialized {
-			if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID); err != nil {
+			if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, name); err != nil {
 				a.log.ErrorContext(ctx, "gagal mark init", "err", err)
 			}
-			a.log.InfoContext(ctx, "chat melakukan init", "chat", msg.ChatID)
-			return a.reply(ctx, msg.ChatID, InitSuccessMessage)
+			a.log.InfoContext(ctx, "chat melakukan init", "chat", msg.ChatID, "name", name)
+			return a.reply(ctx, msg.ChatID, initReply(name))
+		}
+		// Sudah init: update nama bila diberikan, kalau tidak cukup balas status.
+		if name != "" {
+			if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, name); err != nil {
+				a.log.ErrorContext(ctx, "gagal rename ledger", "err", err)
+			}
+			a.log.InfoContext(ctx, "ledger di-rename", "chat", msg.ChatID, "name", name)
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Nama ledger diperbarui: %s", name))
 		}
 		return a.reply(ctx, msg.ChatID, "Akun sudah aktif. Ketik \"bantuan\" untuk format.")
 	}
 
 	// 1b. Command info (diagnostic): selalu tersedia, bahkan pre-init.
 	if isInfoCommand(msg.Text) {
-		return a.handleInfo(ctx, msg, chat.Initialized)
+		return a.handleInfo(ctx, msg, chat)
 	}
 
 	// 2. Pre-init gate: semua pesan lain ditolak sampai chat di-init.
@@ -269,9 +279,17 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 	), nil
 }
 
+// initReply memilih template konfirmasi init sesuai ada/tidak-nya nama ledger.
+func initReply(name string) string {
+	if name == "" {
+		return InitSuccessMessage
+	}
+	return fmt.Sprintf(InitSuccessNamedMessage, name)
+}
+
 // handleInfo merangkai pesan metadata sesi/chat untuk diagnostic.
 // Selalu tersedia (pre-init maupun post-init).
-func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, initialized bool) error {
+func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat) error {
 	count, err := a.txnRepo.WithTx(a.db).CountByChat(ctx, msg.ChatID)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal query count transaksi", "err", err)
@@ -287,7 +305,7 @@ func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, init
 	}
 
 	status := "Belum init"
-	if initialized {
+	if chat.Initialized {
 		status = "Aktif"
 	}
 
@@ -299,6 +317,9 @@ func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, init
 	var b strings.Builder
 	b.WriteString("Info Sesi\n")
 	fmt.Fprintf(&b, "Chat ID   : %s\n", msg.ChatID)
+	if chat.Name != "" {
+		fmt.Fprintf(&b, "Nama      : %s\n", chat.Name)
+	}
 	fmt.Fprintf(&b, "Tipe      : %s\n", chatType)
 	fmt.Fprintf(&b, "Status    : %s\n", status)
 	fmt.Fprintf(&b, "Sender    : %s\n", msg.UserPhone)

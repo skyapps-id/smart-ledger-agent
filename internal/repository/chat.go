@@ -13,7 +13,7 @@ import (
 type ChatRepository interface {
 	WithTx(tx *gorm.DB) ChatRepository
 	GetOrCreate(ctx context.Context, chatID string) (*domain.Chat, error)
-	MarkInitialized(ctx context.Context, chatID string) error
+	MarkInitialized(ctx context.Context, chatID, name string) error
 }
 
 type chatRepo struct{ db *gorm.DB }
@@ -45,9 +45,16 @@ func (r *chatRepo) GetOrCreate(ctx context.Context, chatID string) (*domain.Chat
 	return &c, nil
 }
 
-func (r *chatRepo) MarkInitialized(ctx context.Context, chatID string) error {
+// MarkInitialized mengaktifkan chat. Bila name non-kosong, nama ledger juga
+// di-update (mendukung pemberian nama saat init pertama maupun rename via
+// re-init). name kosong tidak mengubah nama yang sudah ada.
+func (r *chatRepo) MarkInitialized(ctx context.Context, chatID, name string) error {
+	updates := map[string]any{"initialized": true}
+	if name != "" {
+		updates["name"] = name
+	}
 	return r.db.WithContext(ctx).
 		Model(&domain.Chat{}).
 		Where("chat_id = ?", chatID).
-		Update("initialized", true).Error
+		Updates(updates).Error
 }

@@ -28,7 +28,8 @@ func isReportQuery(text string) bool {
 	}
 	markers := []string{
 		"berapa", "ringkas", "laporan", "riwayat", "rincian", "mutasi",
-		"sisa", "stok apa", "ada stok", "stok di", "stok dirumah", "persediaan", "inventaris",
+		"sisa", "stok apa", "ada stok", "stok di", "stok dirumah",
+		"persediaan", "persedian", "inventaris", "inventori", // typo & variasi
 		"per item", "per barang", "beli apa",
 		"pemakaian", "yang dipakai", "pakai apa", "dipakai",
 		"stok keluar", "stok masuk", "keluar apa",
@@ -41,7 +42,8 @@ func isReportQuery(text string) bool {
 		}
 	}
 	switch t {
-	case "stok", "pemasukan", "pengeluaran", "saldo", "mutasi", "ringkasan", "persediaan", "inventaris":
+	case "stok", "pemasukan", "pengeluaran", "saldo", "mutasi", "ringkasan",
+	     "persediaan", "persedian", "inventaris", "inventori":
 		return true
 	}
 	// Perintah tampil di awal kalimat.

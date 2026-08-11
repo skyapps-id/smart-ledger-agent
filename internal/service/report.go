@@ -130,6 +130,30 @@ func parseItemFilter(text string) string {
 		return itemName
 	}
 	
+	// Cek pattern sisa + item
+	re = `(?:sisa)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
+	matches = regexp.MustCompile(re).FindStringSubmatch(t)
+	
+	if len(matches) >= 2 {
+		itemName := strings.TrimSpace(matches[1])
+		// Filter out common words
+		if anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja") {
+			return "" // Return empty untuk show all items
+		}
+		// Return item name untuk specific filter
+		return itemName
+	}
+	
+	if len(matches) >= 2 {
+		itemName := strings.TrimSpace(matches[1])
+		// Filter out common words dan question patterns
+		if anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja", "saya", "punya", "kami", "kita") {
+			return "" // Return empty untuk show all items
+		}
+		// Return item name untuk specific filter
+		return itemName
+	}
+	
 	return ""
 }
 

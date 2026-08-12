@@ -57,6 +57,13 @@ Aturan ekstraksi quantity dan unit dari nama barang (PENTING):
 - Pattern yang didukut: (angka)(unit) seperti "250ml", "1liter", "100gr", "2kg", "500ml", "1.5liter".
 - Bila tidak ada ukuran di nama barang, gunakan quantity:1, unit:"pcs".
 
+Aturan product differentiation (PENTING):
+- Barang dengan ukuran/berat/kemasan BERBEDA adalah PRODUK BERBEDA dan harus punya item_name BERBEDA.
+- Contoh: "Susu BMT 200gr" dan "Susu BMT 400gr" adalah DUA produk berbeda.
+- Contoh: "Kopi 100gr" dan "Kopi 200gr" adalah DUA produk berbeda.
+- Bila inventory sudah ada "susu bmt 400gr" dan user beli "susu bmt 200gr", TIDAK boleh dianggap sama.
+- Hanya anggap sama bila nama, ukuran, dan berat PERSIS sama.
+
 Aturan tanggal (PENTING):
 - Ekstrak tanggal transaksi dari pesan bila disebutkan secara eksplisit.
 - Kata kunci tanggal: "kemarin", "hari ini", "besok", "lusa", atau format tanggal eksplisit.
@@ -114,7 +121,10 @@ Contoh keluaran:
 {"type":"EXPENSE","category":"MINUMAN","item_name":"susu uht","quantity":50,"unit":"pcs","amount":500000,"affects_stock":true,"notes":"1 dus","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"SEMBAKO","item_name":"beras","quantity":5,"unit":"kg","amount":75000,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"SEMBAKO","item_name":"kecap 250ml","quantity":5,"unit":"botol","amount":100000,"affects_stock":true,"notes":"250ml per botol","transaction_date":"","consumption_date":"","total_consumption":0}
-{"type":"EXPENSE","category":"MINUMAN","item_name":"Air","quantity":250,"unit":"ml","amount":45000,"affects_stock":true,"notes":"","transaction_date":"2025-07-01","consumption_date":"","total_consumption":0}
+{"type":"EXPENSE","category":"MINUMAN","item_name":"susu bmt 200gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"EXPENSE","category":"MINUMAN","item_name":"susu bmt 400gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"EXPENSE","category":"MINUMAN","item_name":"kopi 100gr","quantity":10,"unit":"pcs","amount":50000,"affects_stock":true,"notes":"100g per pcs","transaction_date":"2025-08-11","consumption_date":"2025-08-30","total_consumption":500}
+{"type":"EXPENSE","category":"MINUMAN","item_name":"kopi 200gr","quantity":5,"unit":"pcs","amount":35000,"affects_stock":true,"notes":"200g per pcs","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2025-08-10","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"2025-08-09","consumption_date":"","total_consumption":0}
 {"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":"2025-08-01","consumption_date":"","total_consumption":0}
@@ -158,7 +168,8 @@ func BuildInventoryPrompt(items []domain.Inventory) string {
 	if suffix != "" {
 		b.WriteString(suffix)
 	}
-	b.WriteString("\n**ATURAN INVENTORY:** bila user menyebut barang yang mirip dengan item di atas, gunakan **PERSIS** nama dari daftar inventory sebagai item_name. Jangan membuat nama baru untuk barang yang sudah ada di inventory.\n")
+	b.WriteString("\n**ATURAN INVENTORY:** bila user menyebut barang yang SAMA PERSIS dengan item di atas (nama, ukuran, berat), gunakan **PERSIS** nama dari daftar inventory. Jangan membuat nama baru untuk barang yang sudah ada di inventory.\n")
+	b.WriteString("**PENTING:** Barang dengan ukuran/berat berbeda adalah PRODUK BERBEDA. Contoh: \"susu bmt 400gr\" dan \"susu bmt 200gr\" adalah DUA barang berbeda dan harus punya entry terpisah.\n")
 	return b.String()
 }
 

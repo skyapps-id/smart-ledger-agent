@@ -76,7 +76,7 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 		return a.reply(ctx, msg.ChatID, "Maaf, terjadi kendala. Coba lagi nanti.")
 	}
 
-	// LLM Intent Classification - menggantikan 100+ regex patterns
+	// LLM Intent Classification
 	action, err := a.intent.ClassifyIntent(ctx, msg.Text)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal klasifikasi intent", "err", err)

@@ -162,7 +162,6 @@ func BuildInventoryPrompt(items []domain.Inventory) string {
 }
 
 // SystemPromptIntent adalah prompt untuk klasifikasi intent using LLM
-// Ini menggantikan 100+ regex patterns dengan single LLM call
 const SystemPromptIntent = `Anda adalah intent classifier untuk aplikasi pencatat keuangan dan inventaris.
 Tugas: klasifikasikan pesan pengguna menjadi SATU action dan ekstrak parameter yang relevan.
 

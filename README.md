@@ -8,14 +8,15 @@ A WhatsApp-based assistant for tracking personal expenses and inventory. Just ch
 
 ## ✨ Features
 
-- **Chat = Ledger.** Each chat (DM or group) is an independent ledger. Groups share one ledger among members; DMs are personal. The same reporter in 5 groups yields 5 separate ledgers.
-- **Natural language.** Type `beli kopi 15rb` ("bought coffee 15k") → automatically classified as `EXPENSE`. No rigid format required.
-- **Separate stock vs. cash.** Physical-goods expenses automatically increase inventory; stock consumption automatically decreases it.
-- **Opening balance support.** The `SALDO_AWAL` category records the starting cash position, shown separately from income but still counted in net balance.
-- **Greeting-aware.** The `NONE` type ensures that `halo` / `pagi` ("hi" / "morning") is never forced into a bogus transaction.
-- **Inventory-aware extraction.** Stock consumption messages (`ambil susu 2 pcs`) and repeat purchases automatically resolve item names against the ledger's existing inventory. The LLM receives an inventory snapshot as context — so `susu` matches `susu uht` without exact string comparison. Results are cached in-process with write-through invalidation.
-- **Group anti-spam.** The bot only responds when @-mentioned inside a group.
-- **Async worker pool.** Webhooks are acknowledged with `200 OK` in < 50ms; heavy processing (LLM, DB) runs in the background with retry/backoff.
+- **🤖 LLM-Based Intelligence.** Smart routing via LLM intent classification — handles typos, variations, and natural language automatically. No rigid patterns required.
+- **Chat = Ledger.** Each chat (DM or group) is an independent ledger. Groups share one ledger among members; DMs are personal.
+- **Natural Language Processing.** Type `beli kopi 15rb`, `cek stock kecap`, atau `analisa konsumsi bulan ini` → LLM understands intent and extracts structured parameters automatically.
+- **Automatic Inventory Management.** Physical-goods expenses automatically increase inventory; stock consumption automatically decreases it with smart tracking.
+- **Financial Tracking.** Income, expenses, opening balance — all automatically categorized with LLM-powered classification.
+- **Context-Aware.** LLM receives inventory snapshots to resolve ambiguous item names (`susu` → `susu uht`) and provide intelligent responses.
+- **Smart Date Handling.** Various date formats supported: "kemarin", "01/08/2026", "01/08", "11-08" — LLM extracts and parses automatically.
+- **Group Anti-Spam.** Bot only responds when @-mentioned in groups, preventing unwanted messages.
+- **Async Processing.** Webhooks acknowledged in <50ms; LLM processing and database operations run in background with retry logic.
 
 ---
 
@@ -33,7 +34,7 @@ flowchart LR
     P -->|POST /api/sendText| W
 ```
 
-### Lifecycle of a single message
+### Lifecycle of a Message (LLM-Based Architecture)
 
 ```mermaid
 flowchart TD
@@ -42,30 +43,27 @@ flowchart TD
     B -- yes --> C{event=message<br/>and !fromMe?}
     C -- no --> X2[200 ignored]
     C -- yes --> D{Suffix @g.us?}
-    D -- yes --> E{Bot mentioned?<br/>me.id / me.lid}
-    E -- no --> X3[200 ignored<br/>anti-spam]
-    E -- yes --> F
+    D -- yes --> E{Bot mentioned?<br/>@mention detected}
+    E -- no --> X3[200 ignored<br/>anti-spam}
+    E -- yes --> F[Strip @bot token]
     D -- no --> F
-    F[Strip @bot from body<br/>extract chat_id + sender_phone] --> G[Enqueue]
-    G --> H{Routing}
-    H -- init / init name --> I[MarkInitialized + name]
-    H -- info --> J[handleInfo<br/>diagnostic]
-    H -- bantuan --> K[OnboardingTemplate]
-    H -- report query? --> L[handleReport<br/>read DB]
-    H -- other --> M[LLM Extract]
-    M --> N{Type?}
-    N -- NONE --> O[SmallTalk reply]
-    N -- INCOME --> P1[record transaction]
-    N -- EXPENSE --> P2[record + upsert stock<br/>if affects_stock]
-    N -- CONSUMPTION --> P3[decrease stock + log OUT]
-    I --> R[Send reply via WAHA]
-    J --> R
-    K --> R
-    L --> R
-    O --> R
-    P1 --> R
-    P2 --> R
-    P3 --> R
+    F --> G[🤖 LLM Intent Classification]
+    G --> H[Action Determined<br/>+ Parameters Extracted]
+    H --> I{Action Type?}
+    I -- init --> J[handleInitAction<br/>Initialize Ledger]
+    I -- help --> K[Reply with Onboarding]
+    I -- info --> L[handleInfo<br/>Session Details]
+    I -- get_stock --> M[handleGetStock<br/>Query Inventory]
+    I -- get_report --> N[handleGetReport<br/>Generate Report]
+    I -- record_transaction --> O[handleRecordTransaction<br/>LLM Extract + Persist]
+    I -- none --> P[SmallTalk Reply]
+    J --> Q[WAHA Reply]
+    K --> Q
+    L --> Q
+    M --> Q
+    N --> Q
+    O --> Q
+    P --> Q
 ```
 
 ### Inventory Context & Cache
@@ -85,81 +83,14 @@ The system uses LLM as a **translator/adapter** from natural language to structu
 
 #### How It Works: "Cek Stock Kecap" Example
 
-**🔄 Full Flow Architecture:**
-
 ```mermaid
 flowchart TD
-    A[User Query: cek stock kecap] --> B[LLM Intent Classification]
-    B --> C[Classification Result<br/>Action: get_stock<br/>Params: item_filter=kecap]
-    C --> D[Agent Routing<br/>Agent.Process method]
-    D --> E[Switch Action Logic<br/>get_stock to handleGetStock]
-    E --> F[Handler Execution<br/>handleGetStock call]
-    F --> G[Parameter Extraction<br/>Extract itemFilter=kecap]
-    G --> H[Database Query<br/>SELECT FROM inventory<br/>WHERE name LIKE kecap]
-    H --> I[Result Processing<br/>Get inventory items]
-    I --> J[Response Formatting<br/>formatStock function]
-    J --> K[WAHA Reply<br/>Send formatted response]
-    K --> L[User Display<br/>Stok saat ini kecap<br/>Kecap Manis 5 botol<br/>Kecap Asin 3 botol]
-    
-    style A fill:#e1f5ff
-    style B fill:#fff4e6
-    style C fill:#fff4e6
-    style D fill:#f0f0ff
-    style E fill:#f0f0ff
-    style F fill:#e8f5e9
-    style G fill:#e8f5e9
-    style H fill:#fce4ec
-    style I fill:#fce4ec
-    style J fill:#fff9c4
-    style K fill:#fff9c4
-    style L fill:#e1f5ff
-```
-
-**📍 Step-by-Step Breakdown:**
-
-```mermaid
-flowchart LR
-    subgraph Input["Input Layer"]
-        A1[User Query cek stock kecap]
-    end
-    
-    subgraph LLM["LLM Processing"]
-        B1[Intent Classification]
-        B2[Parameter Extraction]
-    end
-    
-    subgraph Routing["Routing Layer"]
-        C1[Agent Process]
-        C2[Switch Logic]
-    end
-    
-    subgraph Handler["Handler Layer"]
-        D1[handleGetStock]
-        D2[Parameter Parse]
-    end
-    
-    subgraph Data["Data Layer"]
-        E1[DB Query]
-        E2[Result Processing]
-    end
-    
-    subgraph Output["Output Layer"]
-        F1[Format Response]
-        F2[WAHA Send]
-        F3[User Display]
-    end
-    
-    A1 --> B1
-    B1 --> B2
-    B2 --> C1
-    C1 --> C2
-    C2 --> D1
-    D1 --> D2
-    D2 --> E1
-    E1 --> E2
-    E2 --> F1
-    F1 --> F2
-    F2 --> F3
+    A[User: cek stock kecap] --> B[LLM Intent Classification]
+    B --> C[Action: get_stock<br/>Params: item_filter=kecap]
+    C --> D[Agent Routing<br/>Switch to handleGetStock]
+    D --> E[Query Inventory<br/>WHERE name LIKE kecap]
+    E --> F[Format Response<br/>formatStock function]
+    F --> G[Reply via WAHA<br/>Stok saat ini kecap<br/>- Kecap Manis: 5 botol<br/>- Kecap Asin: 3 botol]
 ```
 
 #### Supported Query Patterns
@@ -391,42 +322,76 @@ go test -v ./internal/service -run TestFullStockQueryFlow    # Full flow test
 
 ---
 
-## 💬 Commands
+## 💬 Commands & Natural Language Queries
 
+### Basic Commands
 | Message | Action |
 | :--- | :--- |
 | `init` | Activate the ledger for this chat |
-| `init project bangunan 1` | Activate + name the ledger (can be renamed via re-init) |
+| `init project bangunan 1` | Activate + name the ledger |
 | `info` | Show session metadata (chat_id, sender, status, name, transaction count) |
 | `bantuan` | Show the recording-format guide |
-| `saldo awal 5jt` | Record opening cash balance (shown separately from income) |
-| `Pengeluaran hari ini berapa?` | Trigger a report (many variants — see `OnboardingTemplate`) |
 
-`info` is available **even before init** — useful for debugging mention/group flows.
+### Natural Language Examples
+
+**Transactions:**
+- `beli kopi 15rb` → EXPENSE automatically classified
+- `gaji masuk 10jt` → INCOME recorded  
+- `ambil susu 2 pcs` → CONSUMPTION tracked
+
+**Stock Queries (10+ variations work):**
+- `cek stock kecap` → Shows inventory for "kecap"
+- `stok susu` → Shows inventory for "susu"  
+- `sisa air` → Shows inventory for "air"
+- `persediaan popok` → Shows inventory for "popok"
+- `inventaris` → Shows all inventory
+
+**Financial Reports:**
+- `pengeluaran hari ini berapa?` → Today's expenses
+- `total pemasukan bulan ini` → Income this month
+- `ringkasan kemarin` → Yesterday's summary
+
+**Consumption Analysis:**
+- `analisa konsumsi popok 01/08 hingga 11/08` → Consumption analysis with rate calculation
+- `barang apa aja?` → Current inventory list
+- `pemakaian barang minggu ini` → Stock consumption this week
 
 ---
 
-## 📝 Example Inputs
+## 📝 Natural Language Examples
 
+### Transaction Recording
 ```
-EXPENSES:
-> Beli bensin 50rb                          (buy gas 50k)
-> Beli susu UHT 1 dus isi 50pcs harga 500rb (auto wholesale conversion)
-> Bayar listrik 200rb                       (pay electricity 200k)
+ beli kopi 15rb                           # → EXPENSE: coffee 15k
+ gaji masuk 10jt                           # → INCOME: salary 10M
+ beli susu UHT 1 dus isi 50pcs harga 500rb   # → EXPENSE + stock addition
+ ambil susu 2 pcs                           # → CONSUMPTION: stock decrease
+ saldo awal 5jt                            # → INCOME: opening balance
+```
 
-INCOME:
-> Gaji masuk 10jt                           (salary 10M)
-> Saldo awal 5jt                            (opening balance, category SALDO_AWAL)
+### Stock Queries (All variations work)
+```
+ cek stock kecap                             # → Get stock for "kecap"
+ stok susu                                   # → Get stock for "susu"  
+ sisa air                                   # → Get stock for "air"
+ persediaan popok                           # → Get stock for "popok"
+ inventaris                                  # → Show all inventory
+ barang saya apa aja                         # → Show all inventory
+```
 
-STOCK CONSUMPTION:
-> Ambil susu UHT 2 pcs                      (decrease inventory)
+### Financial Reports
+```
+ pengeluaran hari ini berapa                  # → Today's expenses
+ total pemasukan bulan ini                 # → Income this month  
+ pengeluaran per item kemarin              # → Yesterday's expenses per item
+ ringkasan kemarin                         # → Yesterday's summary
+```
 
-REPORTS:
-> Pengeluaran hari ini berapa?              (today's expenses)
-> Total pemasukan bulan ini                 (income this month)
-> Pengeluaran per item kemarin              (yesterday's expenses per item)
-> Barang saya apa aja?                      (current stock)
-> Ringkasan kemarin                         (yesterday's summary)
+### Advanced Queries
+```
+ analisa konsumsi popok 01/08 hingga 11/08    # → Consumption analysis with rate calculation
+ barang apa aja?                          # → Current inventory list
+ pemakaian barang minggu ini                 # → Stock consumption this week
 ```
 
 ---

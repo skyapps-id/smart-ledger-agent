@@ -158,7 +158,6 @@ func parseContent(content string) (domain.Extraction, error) {
 }
 
 // ClassifyIntent mengklasifikasikan intent pesan pengguna menggunakan LLM.
-// Ini menggantikan 100+ regex patterns dengan single LLM call.
 func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error) {
 	body := chatRequest{
 		Model: c.cfg.Model,

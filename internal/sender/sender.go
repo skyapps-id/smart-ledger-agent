@@ -114,8 +114,10 @@ func (s *Sender) calculateDelay() time.Duration {
 	}
 	
 	// Random delay between min and max
-	randomMs := rand.Intn(int(s.maxDelay - s.minDelay))
-	return s.minDelay + time.Duration(randomMs)*time.Millisecond
+	// Both minDelay and maxDelay are already in correct time.Duration format
+	delayRange := s.maxDelay - s.minDelay
+	randomDelay := time.Duration(rand.Int63n(int64(delayRange)))
+	return s.minDelay + randomDelay
 }
 
 // Shutdown menghentikan sender secara graceful.

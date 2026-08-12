@@ -1,7 +1,5 @@
 package service
 
-import "strings"
-
 // OnboardingTemplate dikirim saat user pertama kali mengontak
 // atau meminta bantuan. Menjelaskan format pencatatan.
 const OnboardingTemplate = `Halo! Saya asisten pencatat keuangan & inventaris kamu.
@@ -82,66 +80,5 @@ Ketik "bantuan" kapan saja untuk melihat format pencatatan.`
 const SmallTalkMessage = `Halo! Saya pencatat keuangan & inventaris.
 Ketik "bantuan" untuk lihat cara pakai, atau langsung kirim pesan seperti "beli kopi 15rb".`
 
-// parseInitCommand mendeteksi keyword aktivasi ledger dan mengekstrak nama
-// opsional. Mengembalikan (true, name) bila pesan adalah command init;
-// name bisa kosong.
-//
-// Contoh:
-//
-//	"init"                -> (true, "")
-//	"init personal cash flow" -> (true, "personal cash flow")
-//	`init "personal cash flow"` -> (true, "personal cash flow")   // quote dikupas
-//	"mulai kas rumah"      -> (true, "kas rumah")
-//	"bantuan"              -> (false, "")
-func parseInitCommand(text string) (bool, string) {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return false, ""
-	}
-	lower := strings.ToLower(t)
-	for _, p := range []string{"init", "mulai", "start", "daftar", "aktivasi"} {
-		if lower == p {
-			return true, ""
-		}
-		if strings.HasPrefix(lower, p+" ") {
-			name := strings.TrimSpace(t[len(p):])
-			name = stripMatchingQuotes(name)
-			return true, name
-		}
-	}
-	return false, ""
-}
-
-// stripMatchingQuotes mengupas sepasang quote/kutip tunggal di awal & akhir
-// bila ada, agar `init "nama panjang"` dan `init 'nama'` bekerja natural.
-func stripMatchingQuotes(s string) string {
-	if len(s) < 2 {
-		return s
-	}
-	first, last := s[0], s[len(s)-1]
-	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-		return strings.TrimSpace(s[1 : len(s)-1])
-	}
-	return s
-}
-
-// isHelpCommand mendeteksi keyword yang meminta panduan.
-func isHelpCommand(text string) bool {
-	switch strings.ToLower(strings.TrimSpace(text)) {
-	case "bantuan", "bantu", "panduan", "menu", "format", "help":
-		return true
-	}
-	return false
-}
-
-// isInfoCommand mendeteksi keyword yang meminta metadata sesi/chat.
-// Dipakai untuk diagnostic: user bisa ketik "info" kapan saja (bahkan pre-init)
-// untuk melihat chat_id, sender_phone, status init, nama session WAHA, bot ID,
-// dan jumlah transaksi pada chat tersebut.
-func isInfoCommand(text string) bool {
-	switch strings.ToLower(strings.TrimSpace(text)) {
-	case "info", "sesi", "session", "identitas", "debug":
-		return true
-	}
-	return false
-}
+// Note: parseInitCommand, isHelpCommand, isInfoCommand functions have been removed
+// as they are now handled by LLM-based intent classification in the refactored Agent.Process() method.

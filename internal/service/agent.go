@@ -30,6 +30,7 @@ type Agent struct {
 	invRepo  repository.InventoryRepository
 	logRepo  repository.StockLogRepository
 	llm      llm.Extractor
+	intent   llm.IntentExtractor
 	waha     waha.Sender
 	invCache *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
 	log      *slog.Logger
@@ -43,6 +44,7 @@ func NewAgent(
 	invRepo repository.InventoryRepository,
 	logRepo repository.StockLogRepository,
 	extractor llm.Extractor,
+	intentExtractor llm.IntentExtractor,
 	sender waha.Sender,
 	logger *slog.Logger,
 ) *Agent {
@@ -56,13 +58,14 @@ func NewAgent(
 		invRepo:  invRepo,
 		logRepo:  logRepo,
 		llm:      extractor,
+		intent:   intentExtractor,
 		waha:     sender,
 		invCache: cache.New(5*time.Minute, 10*time.Minute),
 		log:      logger,
 	}
 }
 
-// Process menjalankan pipeline penuh untuk satu pesan masuk.
+// Process menjalankan pipeline penuh untuk satu pesan masuk menggunakan LLM-based routing.
 // Setiap jalur mengirim balasan ke pengguna via WAHA.
 func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 	a.log.InfoContext(ctx, "memproses pesan", "chat", msg.ChatID, "sender", msg.UserPhone, "text", msg.Text)
@@ -73,75 +76,41 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 		return a.reply(ctx, msg.ChatID, "Maaf, terjadi kendala. Coba lagi nanti.")
 	}
 
-	// 1. Init eksplisit: aktifkan ledger chat (idempoten). Bila disertai nama,
-	// nama ledger di-set (mendukung pemberian nama saat init pertama maupun
-	// rename melalui re-init: `init <nama baru>`).
-	if ok, name := parseInitCommand(msg.Text); ok {
-		if !chat.Initialized {
-			if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, name); err != nil {
-				a.log.ErrorContext(ctx, "gagal mark init", "err", err)
-			}
-			a.log.InfoContext(ctx, "chat melakukan init", "chat", msg.ChatID, "name", name)
-			return a.reply(ctx, msg.ChatID, initReply(name))
-		}
-		// Sudah init: update nama bila diberikan, kalau tidak cukup balas status.
-		if name != "" {
-			if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, name); err != nil {
-				a.log.ErrorContext(ctx, "gagal rename ledger", "err", err)
-			}
-			a.log.InfoContext(ctx, "ledger di-rename", "chat", msg.ChatID, "name", name)
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Nama ledger diperbarui: %s", name))
-		}
-		return a.reply(ctx, msg.ChatID, "Akun sudah aktif. Ketik \"bantuan\" untuk format.")
-	}
-
-	// 1b. Command info (diagnostic): selalu tersedia, bahkan pre-init.
-	if isInfoCommand(msg.Text) {
-		return a.handleInfo(ctx, msg, chat)
-	}
-
-	// 2. Pre-init gate: semua pesan lain ditolak sampai chat di-init.
-	if !chat.Initialized {
-		return a.reply(ctx, msg.ChatID, PreInitMessage)
-	}
-
-	// 3. Bantuan format (post-init).
-	if isHelpCommand(msg.Text) {
-		return a.reply(ctx, msg.ChatID, OnboardingTemplate)
-	}
-
-	// 4. Path laporan: bila pesan adalah pertanyaan, baca DB & format jawaban.
-	if isReportQuery(msg.Text) {
-		return a.handleReport(ctx, msg)
-	}
-
-	// 5. Path pencatatan: ekstraksi LLM -> persist.
-	// Sertakan snapshot inventory (pakai cache) agar LLM meresolve nama barang
-	// ke item yang sudah ada di inventory chat ini.
-	items := a.cachedInventory(ctx, msg.ChatID)
-	invContext := llm.BuildInventoryPrompt(items)
-	ext, err := a.llm.Extract(ctx, msg.Text, invContext)
+	// LLM Intent Classification - menggantikan 100+ regex patterns
+	action, err := a.intent.ClassifyIntent(ctx, msg.Text)
 	if err != nil {
-		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
+		a.log.ErrorContext(ctx, "gagal klasifikasi intent", "err", err)
 		return a.reply(ctx, msg.ChatID, "Maaf, gagal memahami pesan. Coba kirim ulang ya.")
 	}
 
-	// Pesan non-transaksi (sapaan/chitchat): jangan dicatat, balas ramah.
-	if ext.Type == domain.ExtractionNone {
-		a.log.InfoContext(ctx, "pesan non-transaksi diabaikan", "text", msg.Text)
+	// Route berdasarkan action yang diklasifikasikan oleh LLM
+	switch action.Action {
+	case domain.ActionInit:
+		return a.handleInitAction(ctx, msg, chat, action.Params)
+	
+	case domain.ActionHelp:
+		return a.reply(ctx, msg.ChatID, OnboardingTemplate)
+	
+	case domain.ActionInfo:
+		return a.handleInfo(ctx, msg, chat)
+	
+	case domain.ActionGetStock:
+		return a.handleGetStock(ctx, msg, chat, action.Params)
+	
+	case domain.ActionGetReport:
+		return a.handleGetReport(ctx, msg, chat, action.Params)
+	
+	case domain.ActionRecordTransaction:
+		return a.handleRecordTransaction(ctx, msg, chat)
+	
+	case domain.ActionNone:
+		a.log.InfoContext(ctx, "pesan tidak dikenali diabaikan", "text", msg.Text)
 		return a.reply(ctx, msg.ChatID, SmallTalkMessage)
+	
+	default:
+		a.log.WarnContext(ctx, "action tidak dikenali", "action", action.Action)
+		return a.reply(ctx, msg.ChatID, "Maaf, gagal mengenali intent pesan.")
 	}
-
-	reply, err := a.persist(ctx, msg, ext)
-	if err != nil {
-		var be *businessError
-		if errors.As(err, &be) {
-			return a.reply(ctx, msg.ChatID, be.msg)
-		}
-		a.log.ErrorContext(ctx, "gagal persistensi", "err", err, "type", ext.Type)
-		return a.reply(ctx, msg.ChatID, "Maaf, terjadi kendala saat mencatat. Coba lagi nanti.")
-	}
-	return a.reply(ctx, msg.ChatID, reply)
 }
 
 // persist menjalankan persistensi sesuai tipe transaksi dalam DB transaction.
@@ -409,6 +378,140 @@ func initReply(name string) string {
 	return fmt.Sprintf(InitSuccessNamedMessage, name)
 }
 
+// ── LLM-based Action Handlers ──
+
+// handleInitAction menangani action init (aktivasi ledger).
+func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+	// Extract ledger name dari params
+	var ledgerName string
+	if name, ok := params["ledger_name"].(string); ok {
+		ledgerName = name
+	}
+
+	if !chat.Initialized {
+		if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, ledgerName); err != nil {
+			a.log.ErrorContext(ctx, "gagal mark init", "err", err)
+		}
+		a.log.InfoContext(ctx, "chat melakukan init", "chat", msg.ChatID, "name", ledgerName)
+		return a.reply(ctx, msg.ChatID, initReply(ledgerName))
+	}
+	
+	// Sudah init: update nama bila diberikan, kalau tidak cukup balas status.
+	if ledgerName != "" {
+		if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, ledgerName); err != nil {
+			a.log.ErrorContext(ctx, "gagal rename ledger", "err", err)
+		}
+		a.log.InfoContext(ctx, "ledger di-rename", "chat", msg.ChatID, "name", ledgerName)
+		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Nama ledger diperbarui: %s", ledgerName))
+	}
+	return a.reply(ctx, msg.ChatID, "Akun sudah aktif. Ketik \"bantuan\" untuk format.")
+}
+
+// handleGetStock menangani action get_stock (query stok/inventory).
+func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+	if !chat.Initialized {
+		return a.reply(ctx, msg.ChatID, PreInitMessage)
+	}
+
+	// Extract item filter dari params
+	var itemFilter string
+	if filter, ok := params["item_filter"].(string); ok {
+		itemFilter = filter
+	}
+
+	var items []domain.Inventory
+	var err error
+
+	if itemFilter != "" {
+		// Query spesifik item yang diminta
+		items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+		}
+		// Filter items yang match dengan itemFilter
+		filteredItems := make([]domain.Inventory, 0)
+		for _, item := range items {
+			if strings.Contains(strings.ToLower(item.ItemName), strings.ToLower(itemFilter)) {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		items = filteredItems
+	} else {
+		// Query semua stok
+		items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+		}
+	}
+
+	return a.reply(ctx, msg.ChatID, formatStock(items, itemFilter))
+}
+
+// handleGetReport menangani action get_report (query laporan).
+func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+	if !chat.Initialized {
+		return a.reply(ctx, msg.ChatID, PreInitMessage)
+	}
+
+	// Extract parameters dari params
+	reportType := "summary" // default
+	period := "today"      // default
+	var itemFilter string
+	var customDateRange string
+
+	if rt, ok := params["report_type"].(string); ok {
+		reportType = rt
+	}
+	if p, ok := params["period"].(string); ok {
+		period = p
+	}
+	if filter, ok := params["item_filter"].(string); ok {
+		itemFilter = filter
+	}
+	if cdr, ok := params["custom_date_range"].(string); ok {
+		customDateRange = cdr
+	}
+
+	return a.generateReport(ctx, msg, reportType, period, itemFilter, customDateRange)
+}
+
+// handleRecordTransaction menangani action record_transaction (pencatatan transaksi).
+func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat) error {
+	if !chat.Initialized {
+		return a.reply(ctx, msg.ChatID, PreInitMessage)
+	}
+
+	// Path pencatatan: ekstraksi LLM -> persist.
+	// Sertakan snapshot inventory (pakai cache) agar LLM meresolve nama barang
+	// ke item yang sudah ada di inventory chat ini.
+	items := a.cachedInventory(ctx, msg.ChatID)
+	invContext := llm.BuildInventoryPrompt(items)
+	ext, err := a.llm.Extract(ctx, msg.Text, invContext)
+	if err != nil {
+		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
+		return a.reply(ctx, msg.ChatID, "Maaf, gagal memahami pesan. Coba kirim ulang ya.")
+	}
+
+	// Pesan non-transaksi (sapaan/chitchat): jangan dicatat, balas ramah.
+	if ext.Type == domain.ExtractionNone {
+		a.log.InfoContext(ctx, "pesan non-transaksi diabaikan", "text", msg.Text)
+		return a.reply(ctx, msg.ChatID, SmallTalkMessage)
+	}
+
+	reply, err := a.persist(ctx, msg, ext)
+	if err != nil {
+		var be *businessError
+		if errors.As(err, &be) {
+			return a.reply(ctx, msg.ChatID, be.msg)
+		}
+		a.log.ErrorContext(ctx, "gagal persistensi", "err", err, "type", ext.Type)
+		return a.reply(ctx, msg.ChatID, "Maaf, terjadi kendala saat mencatat. Coba lagi nanti.")
+	}
+	return a.reply(ctx, msg.ChatID, reply)
+}
+
 // cachedInventory mengembalikan snapshot inventory chat dari cache (TTL 5m)
 // atau dari DB bila cache miss. Dipakai sebagai konteks LLM agar LLM dapat
 // meresolve nama barang (mis. "susu" → "susu uht" di inventory).
@@ -466,6 +569,133 @@ func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, chat
 	fmt.Fprintf(&b, "Bot LID   : %s\n", msg.BotLid)
 	fmt.Fprintf(&b, "Transaksi : %s\n", countStr)
 	return a.reply(ctx, msg.ChatID, b.String())
+}
+
+// generateReport membuat laporan berdasarkan parameter yang diekstrak oleh LLM.
+func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, reportType, periodType, itemFilter, customDateRange string) error {
+	// Parse period ke time range
+	var from, to time.Time
+	now := time.Now()
+	
+	switch periodType {
+	case "today":
+		from = startOfDay(now)
+		to = now
+	case "yesterday":
+		from = startOfDay(now).AddDate(0, 0, -1)
+		to = from.Add(24*time.Hour - time.Second)
+	case "this_week":
+		from = startOfWeek(now)
+		to = now
+	case "last_week":
+		thisWeek := startOfWeek(now)
+		from = thisWeek.AddDate(0, 0, -7)
+		to = thisWeek.Add(-time.Second)
+	case "this_month":
+		from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		to = now
+	case "last_month":
+		firstThis := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		from = firstThis.AddDate(0, -1, 0)
+		to = firstThis.Add(-time.Second)
+	case "custom":
+		// Parse custom date range format "DD/MM - DD/MM"
+		if parsedRange := parseCustomDateRange(customDateRange); parsedRange != nil {
+			from = parsedRange.from
+			to = parsedRange.to
+		} else {
+			// Fallback ke today jika parse gagal
+			from = startOfDay(now)
+			to = now
+		}
+	case "all":
+		from = time.Time{}
+		to = now
+	default:
+		// Default ke today
+		from = startOfDay(now)
+		to = now
+	}
+
+	// Generate report based on type
+	switch reportType {
+	case "summary", "income", "expense":
+		summary, err := a.txnRepo.WithTx(a.db).Summary(ctx, msg.ChatID, from, to)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal query ringkasan", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
+		}
+		
+		// Convert reportType to metric
+		var metric reportMetric
+		switch reportType {
+		case "income":
+			metric = metricIncome
+		case "expense":
+			metric = metricExpense
+		default:
+			metric = metricSummary
+		}
+		
+		periodLabel := formatPeriodLabel(periodType, from, to)
+		periodStruct := period{from: from, to: to, label: periodLabel}
+		return a.reply(ctx, msg.ChatID, formatTxnReport(metric, periodStruct, summary))
+		
+	case "expense_by_item":
+		items, err := a.txnRepo.WithTx(a.db).ExpenseByItem(ctx, msg.ChatID, from, to)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal query per item", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
+		}
+		periodLabel := formatPeriodLabel(periodType, from, to)
+		periodStruct := period{from: from, to: to, label: periodLabel}
+		return a.reply(ctx, msg.ChatID, formatExpenseByItem(periodStruct, items))
+		
+	case "consumption":
+		moves, err := a.logRepo.WithTx(a.db).MovementsByChat(ctx, msg.ChatID, from, to)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal query pemakaian", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
+		}
+		periodLabel := formatPeriodLabel(periodType, from, to)
+		periodStruct := period{from: from, to: to, label: periodLabel}
+		return a.reply(ctx, msg.ChatID, formatConsumption(periodStruct, moves))
+		
+	case "consumption_analysis":
+		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, a.invRepo, msg.ChatID, from, to, itemFilter)
+		if err != nil {
+			a.log.ErrorContext(ctx, "gagal generate analisa konsumsi", "err", err)
+			return a.reply(ctx, msg.ChatID, "Maaf, gagal membuat analisa konsumsi.")
+		}
+		return a.reply(ctx, msg.ChatID, analysis)
+		
+	default:
+		return a.reply(ctx, msg.ChatID, "Maaf, tipe laporan tidak dikenali.")
+	}
+}
+
+// formatPeriodLabel membuat label untuk periode berdasarkan type dan date range
+func formatPeriodLabel(period string, from, to time.Time) string {
+	switch period {
+	case "today":
+		return "hari ini (" + formatDay(from) + ")"
+	case "yesterday":
+		return "kemarin"
+	case "this_week":
+		return "minggu ini"
+	case "last_week":
+		return "minggu lalu"
+	case "this_month":
+		return "bulan ini"
+	case "last_month":
+		return formatMonth(from)
+	case "all":
+		return "sejauh ini"
+	case "custom":
+		return fmt.Sprintf("%s - %s", from.Format("02/01/2006"), to.Format("02/01/2006"))
+	default:
+		return "periode ini"
+	}
 }
 
 // reply membungkus pengiriman WAHA dengan logging.

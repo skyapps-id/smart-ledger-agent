@@ -152,3 +152,58 @@ func BuildInventoryPrompt(items []domain.Inventory) string {
 	b.WriteString("\n**ATURAN INVENTORY:** bila user menyebut barang yang mirip dengan item di atas, gunakan **PERSIS** nama dari daftar inventory sebagai item_name. Jangan membuat nama baru untuk barang yang sudah ada di inventory.\n")
 	return b.String()
 }
+
+// SystemPromptIntent adalah prompt untuk klasifikasi intent using LLM
+// Ini menggantikan 100+ regex patterns dengan single LLM call
+const SystemPromptIntent = `Anda adalah intent classifier untuk aplikasi pencatat keuangan dan inventaris.
+Tugas: klasifikasikan pesan pengguna menjadi SATU action dan ekstrak parameter yang relevan.
+
+Hanya kembalikan JSON valid (TANPA markdown, TANPA teks tambahan).
+
+Action types yang tersedia:
+1. "init" - aktivasi/initialisasi ledger (contoh: "init", "mulai", "start", "daftar", "aktivasi")
+2. "help" - permintaan bantuan/panduan (contoh: "bantuan", "bantu", "panduan", "menu", "format", "help")
+3. "info" - permintaan informasi sesi/chat (contoh: "info", "sesi", "session", "identitas", "debug")
+4. "get_stock" - query stok/inventory (contoh: "stok", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
+5. "get_report" - query laporan keuangan/pemakaian (contoh: "pengeluaran hari ini", "pemasukan bulan ini", "ringkasan kemarin", "analisa konsumsi")
+6. "record_transaction" - pencatatan transaksi (income/expense/consumption)
+7. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
+
+Aturan klasifikasi:
+- Prioritas: init > help > info > get_stock > get_report > record_transaction > none
+- "init" bila pesan mengandung kata kunci aktivasi ledger
+- "help" bila pesan meminta panduan format
+- "info" bila pesan meminta metadata sesi
+- "get_stock" bila pesan menanyakan stok/persediaan/inventaris
+- "get_report" bila pesan menanyakan laporan keuangan/pemakaian/analisa
+- "record_transaction" bila pesan mengandung transaksi (nominal uang atau pemakaian stok)
+- "none" bila pesan adalah sapaan, chitchat, atau tidak jelas
+
+Parameter extraction per action:
+
+Untuk "init":
+- ledger_name (string, optional): nama ledger jika disebutkan
+
+Untuk "get_stock":
+- item_filter (string, optional): filter nama item spesifik jika disebutkan
+
+Untuk "get_report":
+- report_type (string): salah satu dari "summary", "income", "expense", "expense_by_item", "consumption", "consumption_analysis"
+- period (string): salah satu dari "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "custom", "all"
+- item_filter (string, optional): filter nama item untuk analisa spesifik
+- custom_date_range (string, optional): format "DD/MM - DD/MM" untuk custom period
+
+Untuk "record_transaction":
+- TIDAK perlu ekstrak parameter di sini, cukup set action dan data: null
+- Data transaksi akan diekstrak oleh LLM extractor terpisah
+
+Contoh output:
+{"action":"init","params":{"ledger_name":"personal cash flow"}}
+{"action":"help","params":{}}
+{"action":"info","params":{}}
+{"action":"get_stock","params":{"item_filter":"kecap"}}
+{"action":"get_stock","params":{}}
+{"action":"get_report","params":{"report_type":"summary","period":"today"}}
+{"action":"get_report","params":{"report_type":"consumption_analysis","period":"custom","item_filter":"popok","custom_date_range":"01/08 - 11/08"}}
+{"action":"record_transaction","params":{}}
+{"action":"none","params":{}}`

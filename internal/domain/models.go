@@ -129,3 +129,37 @@ func (e *Extraction) Normalise() {
 		e.AffectsStock = false
 	}
 }
+
+// Action types untuk LLM-based routing
+const (
+	ActionRecordTransaction = "record_transaction"
+	ActionGetStock         = "get_stock"
+	ActionGetReport        = "get_report"
+	ActionInit             = "init"
+	ActionHelp             = "help"
+	ActionInfo             = "info"
+	ActionNone             = "none"
+)
+
+// ServiceAction merepresentasikan aksi yang diekstrak oleh LLM intent classifier
+type ServiceAction struct {
+	Action string                 `json:"action"`
+	Params map[string]interface{} `json:"params"`
+	Data   *Extraction             `json:"data,omitempty"`
+}
+
+// ServiceParams adalah parameter yang jelas untuk setiap service action
+type ServiceParams struct {
+	// Untuk get_stock
+	ItemFilter string `json:"item_filter,omitempty"`
+	
+	// Untuk get_report  
+	ReportType string `json:"report_type,omitempty"` 
+	Period     string `json:"period,omitempty"`
+	
+	// Untuk record_transaction
+	TransactionData *Extraction `json:"transaction_data,omitempty"`
+	
+	// Untuk init
+	LedgerName string `json:"ledger_name,omitempty"`
+}

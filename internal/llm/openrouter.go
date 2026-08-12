@@ -22,8 +22,23 @@ type Extractor interface {
 	Extract(ctx context.Context, rawText string, inventoryContext string) (domain.Extraction, error)
 }
 
+// IntentExtractor abstraksi untuk intent classification menggunakan LLM.
+type IntentExtractor interface {
+	ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error)
+}
+
 // New membuat klien OpenRouter dengan HTTP client default.
 func New(cfg config.LLMConfig) Extractor {
+	return &openRouterClient{
+		cfg: cfg,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// NewIntentExtractor membuat klien OpenRouter untuk intent classification.
+func NewIntentExtractor(cfg config.LLMConfig) IntentExtractor {
 	return &openRouterClient{
 		cfg: cfg,
 		httpClient: &http.Client{
@@ -140,6 +155,79 @@ func parseContent(content string) (domain.Extraction, error) {
 		return domain.Extraction{}, err
 	}
 	return e, nil
+}
+
+// ClassifyIntent mengklasifikasikan intent pesan pengguna menggunakan LLM.
+// Ini menggantikan 100+ regex patterns dengan single LLM call.
+func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error) {
+	body := chatRequest{
+		Model: c.cfg.Model,
+		Messages: []chatMessage{
+			{Role: "system", Content: SystemPromptIntent},
+			{Role: "user", Content: "Klasifikasikan pesan ini: " + strings.TrimSpace(rawText)},
+		},
+		Temperature:    0,
+		ResponseFormat: &respFormat{Type: "json_object"},
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return domain.ServiceAction{}, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return domain.ServiceAction{}, fmt.Errorf("buat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	req.Header.Set("HTTP-Referer", "https://github.com/smart-ledger-agent")
+	req.Header.Set("X-Title", "smart-ledger-agent")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.ServiceAction{}, &RequestError{Err: err}
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return domain.ServiceAction{}, fmt.Errorf("baca response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return domain.ServiceAction{}, ErrRateLimited
+	}
+	if resp.StatusCode != http.StatusOK {
+		return domain.ServiceAction{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
+	}
+
+	var chat chatResponse
+	if err := json.Unmarshal(raw, &chat); err != nil {
+		return domain.ServiceAction{}, fmt.Errorf("decode response: %w", err)
+	}
+	if chat.Error != nil {
+		return domain.ServiceAction{}, errors.New(chat.Error.Message)
+	}
+	if len(chat.Choices) == 0 {
+		return domain.ServiceAction{}, errors.New("respons LLM kosong")
+	}
+
+	action, err := parseIntentContent(chat.Choices[0].Message.Content)
+	if err != nil {
+		return domain.ServiceAction{}, fmt.Errorf("parsing JSON LLM: %w", err)
+	}
+	return action, nil
+}
+
+// parseIntentContent membersihkan kemungkinan markdown lalu decode JSON untuk ServiceAction.
+func parseIntentContent(content string) (domain.ServiceAction, error) {
+	clean := extractJSON(content)
+	var a domain.ServiceAction
+	if err := json.Unmarshal([]byte(clean), &a); err != nil {
+		return domain.ServiceAction{}, err
+	}
+	return a, nil
 }
 
 // extractJSON mengambil substring JSON pertama (antara { dan } terakhir).

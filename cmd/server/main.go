@@ -47,10 +47,11 @@ func main() {
 
 	// ── External clients ──
 	extractor := llm.New(cfg.LLM)
+	intentExtractor := llm.NewIntentExtractor(cfg.LLM)
 	sender := waha.New(cfg.WAHA)
 
 	// ── Service ──
-	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, extractor, sender, logger)
+	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, extractor, intentExtractor, sender, logger)
 
 	// ── Worker pool ──
 	pool := worker.New(

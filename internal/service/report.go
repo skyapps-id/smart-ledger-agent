@@ -12,48 +12,11 @@ import (
 	"gorm.io/gorm"
 
 	"smart-ledger-agent/internal/domain"
-	"smart-ledger-agent/internal/entity"
 	"smart-ledger-agent/internal/repository"
 	repomodel "smart-ledger-agent/internal/repository/model"
 )
 
-// ── Intent & parsing ──
-
-// isReportQuery mendeteksi apakah pesan adalah permintaan laporan
-// (bukan instruksi pencatatan).
-func isReportQuery(text string) bool {
-	t := strings.ToLower(strings.TrimSpace(text))
-	if strings.HasSuffix(t, "?") || strings.HasPrefix(t, "?") {
-		return true
-	}
-	markers := []string{
-		"berapa", "ringkas", "laporan", "riwayat", "rincian", "mutasi",
-		"sisa", "stok apa", "ada stok", "stok di", "stok dirumah",
-		"persediaan", "persedian", "inventaris", "inventori", // typo & variasi
-		"per item", "per barang", "beli apa",
-		"pemakaian", "yang dipakai", "pakai apa", "dipakai",
-		"stok keluar", "stok masuk", "keluar apa",
-		"barang apa", "punya barang", "daftar stok", "daftar barang",
-		"analisa", "analisis", "rate konsumsi", "rate pemakaian",
-	}
-	for _, m := range markers {
-		if strings.Contains(t, m) {
-			return true
-		}
-	}
-	switch t {
-	case "stok", "pemasukan", "pengeluaran", "saldo", "mutasi", "ringkasan",
-	     "persediaan", "persedian", "inventaris", "inventori":
-		return true
-	}
-	// Perintah tampil di awal kalimat.
-	for _, p := range []string{"lihat", "tampilkan", "tunjukkan", "cek"} {
-		if strings.HasPrefix(t, p+" ") {
-			return true
-		}
-	}
-	return false
-}
+// ── Report Types & Helpers ──
 
 type reportMetric int
 
@@ -67,103 +30,12 @@ const (
 	metricConsumptionAnalysis // analisa rate konsumsi dari data pembelian + pemakaian
 )
 
-func parseMetric(text string) reportMetric {
-	t := strings.ToLower(text)
-	// Analisa konsumsi dicek paling awal
-	if anyContains(t, "analisa", "analisis", "analisa pemakaian", "analisa konsumsi",
-		"rate konsumsi", "rate pemakaian", "kecepatan habis", "perhitungan habis") {
-		return metricConsumptionAnalysis
-	}
-	// Pemakaian dicek sebelum stok/expense karena "stok keluar" & "pakai"
-	// dapat bentrok dengan kata lain.
-	if anyContains(t, "pemakaian", "pemakai", "dipakai", "stok keluar",
-		"riwayat pakai", "barang dipakai", "yang dipakai", "pakai barang",
-		"pakai apa", "keluar apa", "stok yang keluar") {
-		return metricConsumption
-	}
-	if anyContains(t, "per item", "per barang", "tiap item", "masing-masing",
-		"rincian belanja", "beli apa") {
-		return metricExpenseByItem
-	}
-	if anyContains(t, "stok", "sisa", "persediaan", "persedian", "inventaris", "inventori",
-		"barang apa", "punya barang", "daftar barang", "ada barang") {
-		return metricStock
-	}
-	if anyContains(t, "pemasukan", "pendapatan", "masuk") {
-		return metricIncome
-	}
-	if anyContains(t, "pengeluaran", "biaya", "keluar") {
-		return metricExpense
-	}
-	return metricSummary
-}
-
-// parseItemFilter mencoba mengekstrak nama item dari query untuk filtering
-// Contoh: "Analisa konsumsi popok 01/08 hingga 11/08" → "popok"
-// Contoh: "stok kecap" → "kecap"
-func parseItemFilter(text string) string {
-	t := strings.ToLower(text)
-	
-	// Cek pattern analisa + item + tanggal
-	re := `analisa(?:\s+konsumsi|\s+analisis)?\s+([a-zA-Z0-9\s]+?)(?:\s+\d{1,2}/\d{1,2})`
-	matches := regexp.MustCompile(re).FindStringSubmatch(t)
-	
-	if len(matches) >= 2 {
-		itemName := strings.TrimSpace(matches[1])
-		// Filter out common words yang bukan nama item
-		if !anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin") {
-			return itemName
-		}
-	}
-	
-	// Cek pattern stok + item atau barang + item
-	re = `(?:stok|barang|persediaan|persedian|inventaris|inventori)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
-	matches = regexp.MustCompile(re).FindStringSubmatch(t)
-	
-	if len(matches) >= 2 {
-		itemName := strings.TrimSpace(matches[1])
-		// Filter out common words dan question patterns
-		if anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja", "saya", "punya", "kami", "kita") {
-			return "" // Return empty untuk show all items
-		}
-		// Return item name untuk specific filter
-		return itemName
-	}
-	
-	// Cek pattern sisa + item
-	re = `(?:sisa)\s+([a-zA-Z0-9\s]+?)(?:\s+|$| hari ini| kemarin| minggu ini| bulan ini| apa| apa aja| saja)$`
-	matches = regexp.MustCompile(re).FindStringSubmatch(t)
-	
-	if len(matches) >= 2 {
-		itemName := strings.TrimSpace(matches[1])
-		// Filter out common words
-		if anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja") {
-			return "" // Return empty untuk show all items
-		}
-		// Return item name untuk specific filter
-		return itemName
-	}
-	
-	if len(matches) >= 2 {
-		itemName := strings.TrimSpace(matches[1])
-		// Filter out common words dan question patterns
-		if anyContains(itemName, "hari", "minggu", "bulan", "tahun", "lalu", "ini", "kemarin", "apa", "aja", "saja", "saya", "punya", "kami", "kita") {
-			return "" // Return empty untuk show all items
-		}
-		// Return item name untuk specific filter
-		return itemName
-	}
-	
-	return ""
-}
-
-func anyContains(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
+// period merepresentasikan rentang waktu untuk laporan
+type period struct {
+	from       time.Time
+	to         time.Time
+	label      string
+	itemFilter string // filter analisa per item tertentu (opsional)
 }
 
 // parseCustomDateRange mencoba parse custom date range seperti "01/08 hingga 11/08"
@@ -200,50 +72,7 @@ func parseCustomDateRange(text string) *period {
 	}
 }
 
-type period struct {
-	from       time.Time
-	to         time.Time
-	label      string
-	itemFilter string // filter analisa per item tertentu (opsional)
-}
-
-// parsePeriod menerjemahkan ekspresi waktu Indonesia menjadi rentang [from, to].
-// Default: hari ini.
-func parsePeriod(text string) period {
-	now := time.Now()
-	t := strings.ToLower(text)
-	todayStart := startOfDay(now)
-
-	// Cek custom date range dulu (format: "01/08 hingga 11/08" atau "01/08 sampai 11/08")
-	if customRange := parseCustomDateRange(t); customRange != nil {
-		return *customRange
-	}
-
-	switch {
-	case strings.Contains(t, "bulan lalu"):
-		firstThis := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		from := firstThis.AddDate(0, -1, 0)
-		return period{from: from, to: firstThis.Add(-time.Second), label: formatMonth(from), itemFilter: ""}
-	case strings.Contains(t, "minggu lalu"):
-		thisWeek := startOfWeek(now)
-		from := thisWeek.AddDate(0, 0, -7)
-		return period{from: from, to: thisWeek.Add(-time.Second), label: "minggu lalu", itemFilter: ""}
-	case strings.Contains(t, "kemarin"):
-		from := todayStart.AddDate(0, 0, -1)
-		return period{from: from, to: from.Add(24*time.Hour - time.Second), label: formatDay(from), itemFilter: ""}
-	case strings.Contains(t, "minggu ini"):
-		from := startOfWeek(now)
-		return period{from: from, to: now, label: "minggu ini", itemFilter: ""}
-	case strings.Contains(t, "bulan ini"):
-		from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		return period{from: from, to: now, label: "bulan ini", itemFilter: ""}
-	case strings.Contains(t, "semua") || strings.Contains(t, "seluruh") || strings.Contains(t, "sejauh"):
-		return period{from: time.Time{}, to: now, label: "sejauh ini", itemFilter: ""}
-	default:
-		return period{from: todayStart, to: now, label: "hari ini (" + formatDay(todayStart) + ")", itemFilter: ""}
-	}
-}
-
+// Helper date functions - still needed by formatting functions
 func startOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
@@ -261,90 +90,10 @@ func startOfWeek(t time.Time) time.Time {
 func formatDay(t time.Time) string   { return t.Format("02 Jan 2006") }
 func formatMonth(t time.Time) string { return t.Format("Jan 2006") }
 
-// ── Orchestration ──
-
-// handleReport menjalankan path laporan: baca DB -> format -> balas.
-func (a *Agent) handleReport(ctx context.Context, msg entity.IncomingMessage) error {
-	metric := parseMetric(msg.Text)
-
-	// Stok saat ini: tanpa konteks waktu.
-	if metric == metricStock {
-		// Extract item filter untuk query stok spesifik per item
-		itemFilter := parseItemFilter(msg.Text)
-		
-		var items []domain.Inventory
-		var err error
-		
-		if itemFilter != "" {
-			// Query spesifik item yang diminta
-			items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
-			if err != nil {
-				a.log.ErrorContext(ctx, "gagal query stok", "err", err)
-				return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
-			}
-			// Filter items yang match dengan itemFilter
-			filteredItems := make([]domain.Inventory, 0)
-			for _, item := range items {
-				if strings.Contains(strings.ToLower(item.ItemName), strings.ToLower(itemFilter)) {
-					filteredItems = append(filteredItems, item)
-				}
-			}
-			items = filteredItems
-		} else {
-			// Query semua stok
-			items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
-			if err != nil {
-				a.log.ErrorContext(ctx, "gagal query stok", "err", err)
-				return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
-			}
-		}
-		
-		return a.reply(ctx, msg.ChatID, formatStock(items, itemFilter))
-	}
-
-	p := parsePeriod(msg.Text)
-
-	// Extract item filter untuk analisa spesifik per item
-	if metric == metricConsumptionAnalysis {
-		itemFilter := parseItemFilter(msg.Text)
-		if itemFilter != "" {
-			p.itemFilter = itemFilter
-		}
-	}
-
-	switch metric {
-	case metricConsumptionAnalysis:
-		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, a.invRepo, msg.ChatID, p.from, p.to, p.itemFilter)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal generate analisa konsumsi", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal membuat analisa konsumsi.")
-		}
-		return a.reply(ctx, msg.ChatID, analysis)
-	case metricExpenseByItem:
-		items, err := a.txnRepo.WithTx(a.db).ExpenseByItem(ctx, msg.ChatID, p.from, p.to)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal query per item", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
-		}
-		return a.reply(ctx, msg.ChatID, formatExpenseByItem(p, items))
-	case metricConsumption:
-		moves, err := a.logRepo.WithTx(a.db).MovementsByChat(ctx, msg.ChatID, p.from, p.to)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal query pemakaian", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
-		}
-		return a.reply(ctx, msg.ChatID, formatConsumption(p, moves))
-	default:
-		summary, err := a.txnRepo.WithTx(a.db).Summary(ctx, msg.ChatID, p.from, p.to)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal query ringkasan", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
-		}
-		return a.reply(ctx, msg.ChatID, formatTxnReport(metric, p, summary))
-	}
-}
-
 // ── Formatting ──
+
+// Note: The old handleReport method has been removed as it is now replaced by 
+// LLM-based intent classification and the new generateReport method in agent.go
 
 func formatTxnReport(metric reportMetric, p period, s *repomodel.TxnSummary) string {
 	var b strings.Builder

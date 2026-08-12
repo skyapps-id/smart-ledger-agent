@@ -619,11 +619,41 @@ OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=deepseek/deepseek-chat  # Can be switched to other models
 ```
 
-**Supported Models:**
-- `deepseek/deepseek-chat` (default - fast, cost-effective)
-- `openai/gpt-4o` (advanced reasoning)
-- `anthropic/claude-3-haiku` (fast, reliable)
-- Any OpenRouter-supported model
+**Model Options for Intent Classification:**
+
+| Model | JSON Consistency | Speed | Cost | Best For | Pricing |
+|-------|-----------------|-------|------|----------|---------|
+| `deepseek/deepseek-chat` (current) | ⭐⭐ Inconsistent | ⭐⭐⭐⭐ Fast | Low | Chat, general purpose | ~$0.14/M tokens |
+| `meta-llama/llama-3-8b-instruct` | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐⭐ Medium | Higher | **Production** | ~$0.15-0.50/M tokens |
+| `liquid/lfm-2.5-2.6b:free` | ⭐⭐⭐ Good | ⭐⭐⭐⭐ Very Fast | **FREE** | Development/Testing | **FREE** |
+| `mistralai/mistral-7b-instruct-v0.3` | ⭐⭐⭐⭐ Good | ⭐⭐⭐⭐ Fast | Medium | Production budget | ~$0.10-0.30/M tokens |
+| `google/gemma-3-4b-it:free` | ⭐⭐⭐ Fair | ⭐⭐⭐⭐ Fast | **FREE** | Alternative free | **FREE** |
+| `inclusionai/ling-3.0-tiny:free` | ⭐⭐ Basic | ⭐⭐⭐⭐⭐ Very Fast | **FREE** | Simple classification only | **FREE** |
+
+**Recommendations:**
+- **Development/Testing:** `liquid/lfm-2.5-2.6b:free` (free & capable)
+- **Production:** `meta-llama/llama-3-8b-instruct` (best JSON consistency)
+- **Budget Production:** `mistralai/mistral-7b-instruct-v0.3` (balance)
+
+**Why NOT deepseek/deepseek-chat for classification?**
+- Designed for chat, not structured output
+- JSON responses inconsistent
+- Random behavior on same input
+- Better for conversational AI than intent classification
+
+**To switch models:**
+```bash
+# Update .env file
+OPENROUTER_MODEL=meta-llama/llama-3-8b-instruct
+
+# Or for free development
+OPENROUTER_MODEL=liquid/lfm-2.5-2.6b:free
+
+# Restart app
+docker compose restart app
+# or
+make dev
+```
 
 ---
 

@@ -202,30 +202,36 @@ Aturan klasifikasi (Sederhana dan Jelas):
 - "help": bila kata "bantuan", "bantu", "panduan", "menu", "format", "help" ada di pesan  
 - "info": bila kata "info", "sesi", "session", "debug" ada di pesan
 - "get_stock": bila kata "stok"/"stock", "sisa", "persediaan", "inventaris" ADA di pesan
-- "consumption": bila kata "konsumsi", "pemakaian", "pakai", "barang aktif", "item aktif" ADA di pesan
+- "consumption": bila kata "konsumsi", "pemakaian", "pakai", "barang aktif", "item aktif", "terpakai", "sudah terpakai" ADA di pesan
 - "get_report": bila kata "pengeluaran", "pemasukan", "laporan", "ringkasan", "analisa" ADA di pesan
 - "record_transaction": bila ada NOMINAL UANG (rb, jt, rp, rupiah) atau kata "beli", "bayar" di pesan
 - "none": untuk sapaan (halo, hai, pagi), chitchat, atau tidak jelas
 
 ATURAN KHUSUS: Kata "pakai" SELALU = consumption dengan action "use"
-- "pakai [barang]" → consumption, action: "use", item_name: [barang]
+- "pakai [barang]" → consumption, action: "use", item_name: [barang], usage_qty: 1, usage_unit: "pcs"
+- "pakai [barang] [jumlah] [satuan]" → consumption, action: "use", item_name: [barang], usage_qty: [jumlah], usage_unit: [satuan]
 - Contoh: "pakai susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
+- Contoh: "pakai susu uht 500ml 100ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":100,"usage_unit":"ml"}}
 - Contoh: "pakai popok" → {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 - Contoh: "pakai susu 2 botol" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":2,"usage_unit":"botol"}}
 
 ATURAN KHUSUS: Kata "konsumsi" SELALU = consumption
-- "konsumsi" → consumption, action: "list"
+- "konsumsi" → consumption, action: "list" (default saat tidak ada parameter)
 - "konsumsi list" → consumption, action: "list"  
 - "konsumsi [barang]" → consumption, action: "info", item_name: [barang]
+- "konsumsi [barang] (batch)" → consumption, action: "info", item_name: [barang], batch_number: [batch]
 - Contoh: "konsumsi" → {"action":"consumption","params":{"consumption_action":"list"}}
 - Contoh: "konsumsi list" → {"action":"consumption","params":{"consumption_action":"list"}}
 - Contoh: "konsumsi susu" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
 - Contoh: "konsumsi susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
+- Contoh: "konsumsi susu uht 500ml (AUG-12-152714)" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml","batch_number":"AUG-12-152714"}}
 
 ATURAN KHUSUS: Kata "terpakai" = consumption dengan action "update"
-- "terpakai [item] [batch] [jumlah]" → consumption, action: "update", batch_number: [batch], usage_qty: [jumlah]
-- "sudah terpakai [item] [batch] [jumlah]" → consumption, action: "update", batch_number: [batch], usage_qty: [jumlah]
-- Ini untuk KOREKSI DATA, bukan mengurangi stok! Stok tetap, hanya update nilai konsumsi.
+- "terpakai [item] ([batch]) [jumlah] [unit]" → consumption, action: "update"
+- "sudah terpakai [item] ([batch]) [jumlah] [unit]" → consumption, action: "update"
+- Ini untuk KOREKSI DATA konsumsi yang sudah ada, bukan pemakaian baru!
+- Stok TIDAK dikurangi, hanya update nilai ConsumedQty di cycle yang sudah ada.
+- WAJIB sebut batch number dalam format (BATCH-XXX) antara parentheses.
 - Contoh: "terpakai susu uht 500ml (AUG-12-152714) 100ml" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
 - Contoh: "sudah terpakai 50ml dari batch AUG-12-152714" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
 - Contoh: "terpakai susu (AUG-12-152714) 200ml" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":200,"usage_unit":"ml"}}
@@ -295,15 +301,17 @@ Contoh output:
 {"action":"get_report","params":{"report_type":"expense","period":"this_month"}}
 {"action":"consumption","params":{"consumption_action":"list"}}
 {"action":"consumption","params":{"consumption_action":"list"}}
+{"action":"consumption","params":{"consumption_action":"list"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
-{"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
-{"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":500,"usage_unit":"ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"kecap botol","usage_qty":1,"usage_unit":"botol"}}
+{"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
+{"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
 {"action":"consumption","params":{"consumption_action":"complete","item_name":"susu uht 500ml","batch_number":"AUG-12-135918"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

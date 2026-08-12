@@ -459,10 +459,16 @@ func (s *ConsumptionService) ListActiveItems(ctx context.Context, chatID string)
 			itemLabel = fmt.Sprintf("%s (%s)", cycle.ItemName, cycle.BatchNumber)
 		}
 
+		// Extract actual quantity from item name for accurate display
+		displayQty := extractQuantityFromItemName(cycle.ItemName)
+		if displayQty == 0 {
+			displayQty = totalInSmallestUnit // fallback ke calculated quantity
+		}
+
 		result += fmt.Sprintf(
 			"%d. %s\n   📦 %g %s (%.0f %s)\n   📅 Mulai: %s (%.0f hari lalu)\n\n",
 			i+1, itemLabel,
-			cycle.PurchaseQty, cycle.PurchaseUnit, totalInSmallestUnit, displayUnit,
+			cycle.PurchaseQty, cycle.PurchaseUnit, displayQty, displayUnit,
 			cycle.StartDate.Format("02/01/2006"), daysInUse,
 		)
 	}

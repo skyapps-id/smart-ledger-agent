@@ -193,19 +193,27 @@ Action types yang tersedia:
 3. "info" - permintaan informasi sesi/chat (contoh: "info", "sesi", "session", "identitas", "debug")
 4. "get_stock" - query stok/inventory (contoh: "stok", "stock", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
 5. "get_report" - query laporan keuangan/pemakaian (contoh: "pengeluaran hari ini", "pemasukan bulan ini", "ringkasan kemarin", "analisa konsumsi")
-6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi", "konsumsi susu", "konsumsi susu uht", "pemakaian", "pemakaian barang", "analisa pemakaian popok", "berapa habis per hari", "barang aktif", "item aktif")
+6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi", "konsumsi susu", "konsumsi susu uht", "pemakaian", "pemakaian barang", "analisa pemakaian popok", "barang aktif", "item aktif")
 7. "record_transaction" - pencatatan transaksi (income/expense/consumption)
 8. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
 
-Aturan klasifikasi:
-- Prioritas: init > help > info > get_stock > get_report > record_transaction > none
-- "init" bila pesan mengandung kata kunci aktivasi ledger
-- "help" bila pesan meminta panduan format
-- "info" bila pesan meminta metadata sesi
-- "get_stock" bila pesan menanyakan stok/persediaan/inventaris (BAHASA INGGRIS/INDONESIA: "stock", "stok", "sisa", "persediaan", "inventaris")
-- "get_report" bila pesan menanyakan laporan keuangan/pemakaian/analisa
-- "record_transaction" bila pesan mengandung transaksi (nominal uang atau pemakaian stok)
-- "none" bila pesan adalah sapaan, chitchat, atau tidak jelas
+Aturan klasifikasi (Sederhana dan Jelas):
+- "init": bila kata "init", "mulai", "start", "daftar" ada di pesan
+- "help": bila kata "bantuan", "bantu", "panduan", "menu", "format", "help" ada di pesan  
+- "info": bila kata "info", "sesi", "session", "debug" ada di pesan
+- "get_stock": bila kata "stok"/"stock", "sisa", "persediaan", "inventaris" ADA di pesan
+- "consumption": bila kata "konsumsi", "pemakaian", "pakai", "barang aktif", "item aktif" ADA di pesan
+- "get_report": bila kata "pengeluaran", "pemasukan", "laporan", "ringkasan", "analisa" ADA di pesan
+- "record_transaction": bila ada NOMINAL UANG (rb, jt, rp, rupiah) atau kata "beli", "bayar" di pesan
+- "none": untuk sapaan (halo, hai, pagi), chitchat, atau tidak jelas
+
+CONTOH MATCH:
+- "stok" → get_stock
+- "konsumsi" → consumption  
+- "persediaan" → get_stock
+- "pakai susu" → consumption
+- "beli susu 50rb" → record_transaction
+- "pengeluaran hari ini" → get_report
 
 Parameter extraction per action:
 

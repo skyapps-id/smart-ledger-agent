@@ -23,7 +23,7 @@ func (m *mockIntentExtractor) ClassifyIntent(ctx context.Context, rawText string
 // Test berbagai query patterns untuk get_stock
 func TestGetStockPatterns(t *testing.T) {
 	patterns := []struct {
-		query      string
+		query        string
 		expectedItem string
 	}{
 		{"cek stock kecap", "kecap"},
@@ -32,7 +32,7 @@ func TestGetStockPatterns(t *testing.T) {
 		{"persediaan kecap", "kecap"},
 		{"inventaris kecap", "kecap"},
 		{"stok", ""}, // semua stok
-		{"sisa", ""},  // semua stok
+		{"sisa", ""}, // semua stok
 	}
 
 	for _, pattern := range patterns {
@@ -48,26 +48,26 @@ func TestGetStockPatterns(t *testing.T) {
 func TestIntentClassificationGetStock(t *testing.T) {
 	ctx := context.Background()
 	extractor := &mockIntentExtractor{}
-	
+
 	// Test query
 	query := "cek stock kecap"
 	action, err := extractor.ClassifyIntent(ctx, query)
-	
+
 	if err != nil {
 		t.Fatalf("ClassifyIntent failed: %v", err)
 	}
-	
+
 	// Verify action
 	if action.Action != domain.ActionGetStock {
 		t.Errorf("Expected action %s, got %s", domain.ActionGetStock, action.Action)
 	}
-	
+
 	// Verify parameters
 	itemFilter, ok := action.Params["item_filter"].(string)
 	if !ok || itemFilter != "kecap" {
 		t.Errorf("Expected item_filter 'kecap', got %v", action.Params["item_filter"])
 	}
-	
+
 	t.Logf("✅ Intent classification successful for query '%s'", query)
 	t.Logf("   Action: %s", action.Action)
 	t.Logf("   Params: %v", action.Params)
@@ -87,10 +87,10 @@ func TestFormatStockResponse(t *testing.T) {
 			Unit:     "botol",
 		},
 	}
-	
+
 	response := formatStock(items, "kecap")
 	t.Logf("Stock response:\n%s", response)
-	
+
 	if response == "" {
 		t.Error("formatStock returned empty string")
 	}

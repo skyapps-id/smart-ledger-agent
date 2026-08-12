@@ -87,26 +87,26 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 	switch action.Action {
 	case domain.ActionInit:
 		return a.handleInitAction(ctx, msg, chat, action.Params)
-	
+
 	case domain.ActionHelp:
 		return a.reply(ctx, msg.ChatID, OnboardingTemplate)
-	
+
 	case domain.ActionInfo:
 		return a.handleInfo(ctx, msg, chat)
-	
+
 	case domain.ActionGetStock:
 		return a.handleGetStock(ctx, msg, chat, action.Params)
-	
+
 	case domain.ActionGetReport:
 		return a.handleGetReport(ctx, msg, chat, action.Params)
-	
+
 	case domain.ActionRecordTransaction:
 		return a.handleRecordTransaction(ctx, msg, chat)
-	
+
 	case domain.ActionNone:
 		a.log.InfoContext(ctx, "pesan tidak dikenali diabaikan", "text", msg.Text)
 		return a.reply(ctx, msg.ChatID, SmallTalkMessage)
-	
+
 	default:
 		a.log.WarnContext(ctx, "action tidak dikenali", "action", action.Action)
 		return a.reply(ctx, msg.ChatID, "Maaf, gagal mengenali intent pesan.")
@@ -395,7 +395,7 @@ func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage
 		a.log.InfoContext(ctx, "chat melakukan init", "chat", msg.ChatID, "name", ledgerName)
 		return a.reply(ctx, msg.ChatID, initReply(ledgerName))
 	}
-	
+
 	// Sudah init: update nama bila diberikan, kalau tidak cukup balas status.
 	if ledgerName != "" {
 		if err := a.chatRepo.MarkInitialized(ctx, msg.ChatID, ledgerName); err != nil {
@@ -457,7 +457,7 @@ func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage,
 
 	// Extract parameters dari params
 	reportType := "summary" // default
-	period := "today"      // default
+	period := "today"       // default
 	var itemFilter string
 	var customDateRange string
 
@@ -473,7 +473,7 @@ func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage,
 	if cdr, ok := params["custom_date_range"].(string); ok {
 		customDateRange = cdr
 	}
-	
+
 	// Create action object for passing to generateReport
 	action := domain.ServiceAction{
 		Action: domain.ActionGetReport,
@@ -582,7 +582,7 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 	// Parse period ke time range
 	var from, to time.Time
 	now := time.Now()
-	
+
 	switch periodType {
 	case "today":
 		from = startOfDay(now)
@@ -624,7 +624,7 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 			// Fallback jika tidak ada from_date
 			from = startOfDay(now)
 		}
-		
+
 		if toDate, ok := action.Params["to_date"].(string); ok && toDate != "" {
 			parsedTo, err := parseLLMDate(toDate)
 			if err == nil {
@@ -657,7 +657,7 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 			a.log.ErrorContext(ctx, "gagal query ringkasan", "err", err)
 			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
 		}
-		
+
 		// Convert reportType to metric
 		var metric reportMetric
 		switch reportType {
@@ -668,11 +668,11 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 		default:
 			metric = metricSummary
 		}
-		
+
 		periodLabel := formatPeriodLabel(periodType, from, to)
 		periodStruct := period{from: from, to: to, label: periodLabel}
 		return a.reply(ctx, msg.ChatID, formatTxnReport(metric, periodStruct, summary))
-		
+
 	case "expense_by_item":
 		items, err := a.txnRepo.WithTx(a.db).ExpenseByItem(ctx, msg.ChatID, from, to)
 		if err != nil {
@@ -682,7 +682,7 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 		periodLabel := formatPeriodLabel(periodType, from, to)
 		periodStruct := period{from: from, to: to, label: periodLabel}
 		return a.reply(ctx, msg.ChatID, formatExpenseByItem(periodStruct, items))
-		
+
 	case "consumption":
 		moves, err := a.logRepo.WithTx(a.db).MovementsByChat(ctx, msg.ChatID, from, to)
 		if err != nil {
@@ -692,15 +692,15 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 		periodLabel := formatPeriodLabel(periodType, from, to)
 		periodStruct := period{from: from, to: to, label: periodLabel}
 		return a.reply(ctx, msg.ChatID, formatConsumption(periodStruct, moves))
-		
+
 	case "consumption_analysis":
-		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, a.invRepo, msg.ChatID, from, to, itemFilter)
+		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, msg.ChatID, from, to, itemFilter)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal generate analisa konsumsi", "err", err)
 			return a.reply(ctx, msg.ChatID, "Maaf, gagal membuat analisa konsumsi.")
 		}
 		return a.reply(ctx, msg.ChatID, analysis)
-		
+
 	default:
 		return a.reply(ctx, msg.ChatID, "Maaf, tipe laporan tidak dikenali.")
 	}
@@ -924,11 +924,12 @@ func parseConversionInfo(notes string) (float64, string) {
 		if err == nil {
 			unit := matches[2]
 			// Normalize unit
-			if unit == "gram" || unit == "g" {
+			switch unit {
+			case "gram", "g":
 				unit = "g"
-			} else if unit == "mililiter" || unit == "mililitre" || unit == "ml" {
+			case "mililiter", "mililitre", "ml":
 				unit = "ml"
-			} else if unit == "kilogram" || unit == "kg" {
+			case "kilogram", "kg":
 				unit = "kg"
 			}
 			return quantity, unit

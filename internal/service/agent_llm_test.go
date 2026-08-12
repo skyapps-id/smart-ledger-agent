@@ -102,8 +102,8 @@ func TestGetStockQueryPatterns(t *testing.T) {
 
 			// Create custom mock for this test case
 			extractor := &mockIntentExtractorWithCustomResponse{
-				action:      tc.expectedAction,
-				itemFilter:  itemFilter,
+				action:     tc.expectedAction,
+				itemFilter: itemFilter,
 			}
 
 			action, err := extractor.ClassifyIntent(ctx, tc.query)
@@ -132,8 +132,8 @@ func TestGetStockQueryPatterns(t *testing.T) {
 
 // Mock dengan custom response
 type mockIntentExtractorWithCustomResponse struct {
-	action      string
-	itemFilter  interface{}
+	action     string
+	itemFilter interface{}
 }
 
 func (m *mockIntentExtractorWithCustomResponse) ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error) {
@@ -141,7 +141,7 @@ func (m *mockIntentExtractorWithCustomResponse) ClassifyIntent(ctx context.Conte
 	if m.itemFilter != nil && m.itemFilter != "" {
 		params["item_filter"] = m.itemFilter
 	}
-	
+
 	return domain.ServiceAction{
 		Action: m.action,
 		Params: params,
@@ -161,12 +161,12 @@ func TestFullStockQueryFlow(t *testing.T) {
 	t.Log("🤖 Step 1: LLM Intent Classification")
 	ctx := context.Background()
 	extractor := &mockIntentExtractor{}
-	
+
 	action, err := extractor.ClassifyIntent(ctx, userQuery)
 	if err != nil {
 		t.Fatalf("Intent classification failed: %v", err)
 	}
-	
+
 	t.Logf("   ✅ Action: %s", action.Action)
 	t.Logf("   ✅ Params: %v", action.Params)
 
@@ -193,7 +193,7 @@ func TestFullStockQueryFlow(t *testing.T) {
 		{ItemName: "Kecap Manis", StockQty: 5.0, Unit: "botol"},
 		{ItemName: "Kecap Asin", StockQty: 3.0, Unit: "botol"},
 	}
-	
+
 	response := formatStock(mockItems, itemFilter)
 	t.Logf("   ✅ Response Generated:")
 	for _, line := range []string{response} {

@@ -44,7 +44,7 @@ flowchart TD
     C -- no --> X2[200 ignored]
     C -- yes --> D{Suffix @g.us?}
     D -- yes --> E{Bot mentioned?<br/>@mention detected}
-    E -- no --> X3[200 ignored<br/>anti-spam}
+    E -- no --> X3[200 ignored<br/>anti-spam]
     E -- yes --> F[Strip @bot token]
     D -- no --> F
     F --> G[🤖 LLM Intent Classification]
@@ -79,7 +79,7 @@ Before every LLM extraction, the agent loads the chat's current inventory snapsh
 
 ### 🤖 LLM-Based Routing Architecture
 
-The system uses LLM as a **translator/adapter** from natural language to structured service API calls, replacing 100+ regex patterns with a single, intelligent routing mechanism.
+The system uses LLM as a **translator/adapter** from natural language to structured service API calls.
 
 #### How It Works: "Cek Stock Kecap" Example
 
@@ -95,7 +95,7 @@ flowchart TD
 
 #### Supported Query Patterns
 
-The LLM intent classifier handles **10+ variations** without code changes:
+The LLM intent classifier handles **10+ variations**:
 
 | Query Pattern | Example | Works? |
 |--------------|---------|--------|
@@ -106,18 +106,6 @@ The LLM intent classifier handles **10+ variations** without code changes:
 | **Typo tolerance** | `"persedian kecap"` | ✅ |
 | Complete sentence | `"cek sisa stok kecap di rumah"` | ✅ |
 | General queries | `"stok"`, `"sisa"` | ✅ (show all) |
-
-#### Architecture Benefits
-
-| Feature | Old (Regex) | New (LLM) |
-|---------|-------------|------------|
-| **Patterns to maintain** | 100+ regex patterns | 1 LLM prompt |
-| **Typo tolerance** | ❌ None | ✅ Built-in |
-| **Natural variations** | ❌ Rigid | ✅ Flexible |
-| **Adding new patterns** | Add regex code | Update prompt |
-| **Single source of truth** | ❌ Scattered logic | ✅ Service API |
-| **Testability** | Complex regex tests | Simple prompt tests |
-| **Maintenance** | High (code changes) | Low (prompt updates) |
 
 #### Implementation Details
 
@@ -180,7 +168,7 @@ erDiagram
         varchar(16) type "INCOME / EXPENSE"
         varchar(32) category
         varchar(128) item_name
-        numeric(15,2) amount
+        numeric amount
         text raw_payload
         timestamptz created_at
     }
@@ -188,7 +176,7 @@ erDiagram
         bigint id PK
         varchar(64) chat_id FK
         varchar(128) item_name UK
-        numeric(12,2) stock_qty
+        numeric stock_qty
         varchar(32) unit
         timestamptz updated_at
     }
@@ -196,7 +184,7 @@ erDiagram
         bigint id PK
         bigint inventory_id FK
         varchar(16) change_type "IN / OUT"
-        numeric(12,2) quantity
+        numeric quantity
         text notes
         timestamptz created_at
     }
@@ -444,11 +432,7 @@ make clean          # remove bin/ and data/
 make test-llm       # test LLM intent classification
 make test-flow      # test full flow simulation
 
-# PostgreSQL helpers (via docker compose)
-make db-up          # start postgres
-make db-down        # stop postgres
-make db-psql        # interactive psql session
-make db-reset       # wipe postgres (careful!)
+
 ```
 
 ### Working with LLM Prompts
@@ -633,25 +617,3 @@ All these would require only prompt additions, not complex code changes!
 - **Model Dependencies.** The system is designed to work with various LLM models, but prompt effectiveness may vary. Test with your chosen model.
 
 ---
-
-## 🎯 Key Improvements from Refactoring
-
-The recent refactoring from regex-heavy to LLM-based routing brought significant improvements:
-
-### Performance & Maintainability
-- **Code Reduction**: Removed 100+ regex patterns, replaced with 1 LLM prompt
-- **Typo Tolerance**: Built-in handling of user typos and variations
-- **Natural Language**: Support for complete sentences and conversational queries
-- **Faster Development**: Adding new features requires prompt updates, not code changes
-
-### User Experience
-- **Flexible Queries**: "cek stock kecap", "stok kecap", "sisa kecap" all work
-- **Better Error Handling**: LLM provides more meaningful error messages
-- **Context Awareness**: System understands user intent beyond pattern matching
-- **Scalability**: Easy to add new capabilities without complex regex logic
-
-### Technical Benefits
-- **Single Source of Truth**: Service APIs are clear and well-defined
-- **Testability**: Comprehensive test coverage for all query patterns
-- **Observability**: Easy to monitor LLM performance and accuracy
-- **Future-Proof**: Simple to upgrade to better LLM models as they become available

@@ -56,7 +56,7 @@ func formatMonth(t time.Time) string { return t.Format("Jan 2006") }
 
 // ── Formatting ──
 
-// Note: The old handleReport method has been removed as it is now replaced by 
+// Note: The old handleReport method has been removed as it is now replaced by
 // LLM-based intent classification and the new generateReport method in agent.go
 
 func formatTxnReport(metric reportMetric, p period, s *repomodel.TxnSummary) string {
@@ -172,7 +172,7 @@ func formatConsumption(p period, moves []repomodel.StockMovement) string {
 }
 
 // generateConsumptionAnalysis membuat analisa konsumsi dari data pembelian + pemakaian
-func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repository.StockLogRepository, invRepo repository.InventoryRepository, chatID string, from, to time.Time, itemFilter string) (string, error) {
+func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repository.StockLogRepository, chatID string, from, to time.Time, itemFilter string) (string, error) {
 	// Query semua stock movements dalam periode
 	moves, err := logRepo.WithTx(db).MovementsByChat(ctx, chatID, from, to)
 	if err != nil {
@@ -214,12 +214,13 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 		}
 		data := itemsMap[m.ItemName]
 
-		if m.ChangeType == domain.StockIn {
+		switch m.ChangeType {
+		case domain.StockIn:
 			data.totalIn += m.Quantity
 			if data.firstInDate.IsZero() || m.CreatedAt.Before(data.firstInDate) {
 				data.firstInDate = m.CreatedAt
 			}
-		} else if m.ChangeType == domain.StockOut {
+		case domain.StockOut:
 			data.totalOut += m.Quantity
 			if data.lastOutDate.IsZero() || m.CreatedAt.After(data.lastOutDate) {
 				data.lastOutDate = m.CreatedAt
@@ -232,7 +233,7 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 	for _, data := range itemsMap {
 		// Durasi periode analisa dalam hari
 		analysisDuration := to.Sub(from).Hours() / 24
-		
+
 		if analysisDuration > 0 && data.totalOut > 0 {
 			data.daysInUse = analysisDuration
 		} else if !data.firstInDate.IsZero() && !data.lastOutDate.IsZero() && data.totalOut > 0 {
@@ -264,26 +265,26 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 
 		fmt.Fprintf(&b, "📦 %s:\n", name)
 		fmt.Fprintf(&b, "   Stok masuk: %g %s\n", data.totalIn, data.unit)
-		
+
 		if data.totalOut > 0 {
-			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n", 
+			fmt.Fprintf(&b, "   Stok keluar: %g %s (%.0f%% dari masuk)\n",
 				data.totalOut, data.unit, (data.totalOut/data.totalIn)*100)
-			
+
 			if data.daysInUse > 0 {
 				dailyRate := data.totalOut / data.daysInUse
-				fmt.Fprintf(&b, "   Periode analisa: %.0f hari (%s → %s)\n", 
+				fmt.Fprintf(&b, "   Periode analisa: %.0f hari (%s → %s)\n",
 					data.daysInUse,
 					from.Format("02/01/2006"),
 					to.Format("02/01/2006"))
 				fmt.Fprintf(&b, "   Rate konsumsi: %.2f %s/hari\n", dailyRate, data.unit)
-				
+
 				// Tampilkan range tanggal transaksi actual bila berbeda dari periode analisa
 				if !data.firstInDate.IsZero() && !data.lastOutDate.IsZero() {
 					fmt.Fprintf(&b, "   Transaksi: %s → %s\n",
 						data.firstInDate.Format("02/01/2006"),
 						data.lastOutDate.Format("02/01/2006"))
 				}
-				
+
 				// Estimasi kapan stok habis (bila ada sisa)
 				remaining := data.totalIn - data.totalOut
 				if remaining > 0 && dailyRate > 0 {
@@ -293,7 +294,7 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 					if daysUntilEmpty < 1 {
 						timeToEmptyStr = fmt.Sprintf("%.0f jam", daysUntilEmpty*24)
 					}
-					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s, %s dari sekarang)\n", 
+					fmt.Fprintf(&b, "   Sisa stok: %g %s (estimasi habis: %s, %s dari sekarang)\n",
 						remaining, data.unit, estimatedEmpty.Format("02/01/2006"), timeToEmptyStr)
 				} else if remaining > 0 {
 					fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)
@@ -301,7 +302,7 @@ func generateConsumptionAnalysis(ctx context.Context, db *gorm.DB, logRepo repos
 			}
 		} else {
 			fmt.Fprintf(&b, "   Belum ada pemakaian\n")
-			
+
 			remaining := data.totalIn - data.totalOut
 			if remaining > 0 {
 				fmt.Fprintf(&b, "   Sisa stok: %g %s\n", remaining, data.unit)

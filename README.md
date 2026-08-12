@@ -12,7 +12,8 @@ A WhatsApp-based assistant for tracking personal expenses and inventory. Just ch
 - **Chat = Ledger.** Each chat (DM or group) is an independent ledger. Groups share one ledger among members; DMs are personal.
 - **Natural Language Processing.** Type `beli kopi 15rb`, `cek stock kecap`, atau `analisa konsumsi bulan ini` → LLM understands intent and extracts structured parameters automatically.
 - **Automatic Inventory Management.** Physical-goods expenses automatically increase inventory; stock consumption automatically decreases it with smart tracking.
-- **Consumption Cycle Tracking.** Track per-item usage from start to finish — auto-generated batch numbers, daily rate calculation in smallest units (grams/ml), full consumption history.
+- **Consumption Cycle Tracking.** Track per-item usage from start to finish — auto-generated batch numbers, daily rate calculation in correct units (grams/ml), full consumption history with multi-batch support.
+- **Smart Consumption Module.** Advanced consumption tracking with proper unit detection (ml for liquids, gr for solids), batch management, usage completion tracking, and detailed consumption analytics.
 - **Financial Tracking.** Income, expenses, opening balance — all automatically categorized with LLM-powered classification.
 - **Context-Aware.** LLM receives inventory snapshots to resolve ambiguous item names (`susu` → `susu uht`) and provide intelligent responses.
 - **Smart Date Handling.** Various date formats supported: "kemarin", "01/08/2026", "01/08", "11-08" — LLM extracts and parses automatically.
@@ -142,14 +143,16 @@ The LLM intent classifier handles **10+ variations**:
 #### Implementation Details
 
 **1. Intent Classification Prompt (`SystemPromptIntent`)**
-- Classifies user messages into actions: `init`, `help`, `info`, `get_stock`, `get_report`, `record_transaction`, `none`
-- Extracts structured parameters (e.g., `item_filter: "kecap"`)
+- Classifies user messages into actions: `init`, `help`, `info`, `get_stock`, `get_report`, `consumption`, `record_transaction`, `none`
+- Extracts structured parameters (e.g., `item_filter: "kecap"`, `consumption_action: "info"`)
 - Handles typo tolerance and natural language variations
+- Enhanced consumption query recognition with multiple patterns
 
 **2. Service Handlers (Clean API)**
 - `handleInitAction()` - Ledger initialization
 - `handleGetStock()` - Stock queries with filtering
 - `handleGetReport()` - Financial reports & analysis
+- `handleConsumptionAction()` - Consumption cycle management with smart unit detection
 - `handleRecordTransaction()` - Transaction recording via LLM extraction
 
 **3. Extensibility**
@@ -301,6 +304,8 @@ The LLM-based routing architecture is fully tested with automated test coverage:
 ✅ Parameter extraction: 100% correct
 ✅ Response formatting: Working as expected
 ✅ Full flow simulation: Success
+✅ Consumption module: Multi-batch tracking working
+✅ Unit detection: Smart ml/gr classification working
 ```
 
 ### Test Coverage
@@ -308,6 +313,8 @@ The LLM-based routing architecture is fully tested with automated test coverage:
 - **Parameter Extraction**: Edge cases and variations covered
 - **Response Formatting**: Stock queries validated
 - **Full Flow Simulation**: End-to-end testing confirmed
+- **Consumption Tracking**: Multi-batch scenarios, unit detection, completion flows
+- **Consumption Analysis**: Rate calculation, history tracking, active cycle management
 
 ### Running Tests
 ```bash
@@ -386,16 +393,22 @@ go test -v ./internal/service -run TestFullStockQueryFlow    # Full flow test
 - `sisa air` → Shows inventory for "air"
 - `persediaan popok` → Shows inventory for "popok"
 - `inventaris` → Shows all inventory
+- `stock` → Shows all inventory
+
+**Consumption Tracking & Analysis:**
+- `konsumsi` → Shows all active consumption cycles
+- `konsumsi susu` → Shows consumption info for "susu"
+- `konsumsi susu uht` → Shows consumption info for "susu uht"
+- `barang aktif` → Lists all items currently being consumed
+- `pakai susu uht 500ml 1 botol` → Record usage and start consumption cycle
+- `susu uht 500ml sudah habis` → Complete consumption cycle with analytics
+- `analisa konsumsi popok 01/08 hingga 11/08` → Consumption analysis with rate calculation
 
 **Financial Reports:**
 - `pengeluaran hari ini berapa?` → Today's expenses
 - `total pemasukan bulan ini` → Income this month
 - `ringkasan kemarin` → Yesterday's summary
-
-**Consumption Analysis:**
-- `analisa konsumsi popok 01/08 hingga 11/08` → Consumption analysis with rate calculation
-- `barang apa aja?` → Current inventory list
-- `pemakaian barang minggu ini` → Stock consumption this week
+- `pengeluaran per item kemarin` → Yesterday's expenses per item
 
 ---
 
@@ -422,17 +435,28 @@ go test -v ./internal/service -run TestFullStockQueryFlow    # Full flow test
 
 ### Financial Reports
 ```
- pengeluaran hari ini berapa                  # → Today's expenses
- total pemasukan bulan ini                 # → Income this month  
- pengeluaran per item kemarin              # → Yesterday's expenses per item
- ringkasan kemarin                         # → Yesterday's summary
+  pengeluaran hari ini berapa                  # → Today's expenses
+  total pemasukan bulan ini                 # → Income this month  
+  pengeluaran per item kemarin              # → Yesterday's expenses per item
+  ringkasan kemarin                         # → Yesterday's summary
+```
+
+### Consumption Tracking
+```
+  konsumsi                                   # → Shows all active consumption cycles
+  konsumsi susu                              # → Shows consumption info for "susu"
+  konsumsi susu uht 500ml                   # → Shows consumption info for "susu uht 500ml"
+  barang aktif                              # → Lists all items currently being consumed
+  pakai susu uht 500ml 1 botol             # → Record usage and start consumption cycle
+  susu uht 500ml sudah habis                # → Complete consumption cycle with analytics
+  analisa konsumsi popok 01/08 hingga 11/08 # → Consumption analysis with rate calculation
 ```
 
 ### Advanced Queries
 ```
- analisa konsumsi popok 01/08 hingga 11/08    # → Consumption analysis with rate calculation
- barang apa aja?                          # → Current inventory list
- pemakaian barang minggu ini                 # → Stock consumption this week
+  barang apa aja?                          # → Current inventory list
+  pemakaian barang minggu ini               # → Stock consumption this week
+  stock sisa                                # → Shows all remaining inventory
 ```
 
 ---
@@ -455,12 +479,13 @@ smart-ledger-agent/
 │   ├── repository/
 │   │   ├── model/              # query-result DTOs (TxnSummary, ItemBreakdown, StockMovement)
 │   │   ├── chat.go
+│   │   ├── consumption_cycle.go  # consumption cycle repository
 │   │   ├── transaction.go
 │   │   ├── inventory.go
 │   │   ├── stock_log.go
 │   │   └── report.go
 │   ├── router/                 # Echo routes
-│   ├── service/                # orchestrator (agent.go, report.go, template.go)
+│   ├── service/                # orchestrator (agent.go, consumption_service.go, report.go, template.go)
 │   ├── waha/                   # WhatsApp HTTP client
 │   └── worker/                 # async worker pool + retry
 ├── RFC/RFC.md                  # full specification
@@ -496,12 +521,19 @@ make test-flow      # test full flow simulation
 3. Edit `internal/service/agent.go` - Add handler function
 4. Test with `go test -v ./internal/service -run TestYourNewFeature`
 
+**Consumption Module Integration:**
+- Automatic unit detection: `determineSmallestUnit()` identifies ml vs gr based on item names
+- Multi-batch support: Track multiple consumption cycles for the same item
+- Smart completion: `handleConsumptionAction()` with info, list, use, complete actions
+- Enhanced LLM prompts: Comprehensive consumption query patterns
+
 **Prompt Best Practices:**
 - **Be Specific**: "Extract transaction data" not "Parse the message"
 - **JSON Format**: Always request structured JSON output
 - **Examples**: Provide 3-5 input → output examples
 - **Error Handling**: Define behavior for invalid inputs
 - **Context Injection**: Include relevant context (inventory, history)
+- **Unit Awareness**: Consider liquid vs solid items when extracting quantities
 
 **Monitoring LLM Performance:**
 ```bash
@@ -570,6 +602,7 @@ tail -f logs/app.log | grep -E "worker|queue|retry"
 | LLM Provider | OpenRouter |
 | LLM Model | DeepSeek Chat (default) |
 | Intent Classification | Custom LLM-based routing |
+| Consumption Tracking | Auto-generated batch numbers, smart unit detection (ml/gr) |
 | Cache | `patrickmn/go-cache` (in-memory) |
 | Container | Docker + Docker Compose |
 | Logging | `log/slog` (stdlib) |
@@ -624,6 +657,12 @@ A: Check logs for "LLM", "intent", "classification" keywords, or run specific te
 go test -v ./internal/service -run TestGetStockQueryPatterns
 ```
 
+**Q: How does the consumption module handle different units?**
+A: The system automatically detects units based on item names and packaging. "susu uht 200ml" uses milliliters, while "susu 400gr" uses grams. The `determineSmallestUnit()` function intelligently categorizes items.
+
+**Q: Can I track multiple consumption cycles for the same item?**
+A: Yes! The system supports multi-batch tracking with auto-generated batch numbers (e.g., "AUG-12-135918"). Each batch is tracked independently with its own consumption analytics.
+
 ---
 
 ## 📊 Performance Benchmarks
@@ -647,16 +686,18 @@ Based on local testing with DeepSeek Chat model:
 
 ## 🚀 Future Enhancements
 
-Potential improvements to the LLM-based architecture:
+Potential improvements to the LLM-based architecture and consumption module:
 
-1. **Multi-Language Support**: Add prompts for Indonesian, English, other languages
-2. **Advanced Analytics**: Usage patterns, spending insights, predictions
-3. **Reminder System**: "Set reminder beli Detergent besok"
-4. **Smart Suggestions**: "Based on your usage, consider buying X in bulk"
+1. **Advanced Consumption Analytics**: Predictive consumption patterns, smart restocking suggestions, usage trends analysis
+2. **Multi-Language Support**: Add prompts for Indonesian, English, other languages
+3. **Consumption Reminders**: "Based on your usage, consider buying X in bulk" or "Running low on Y, reorder soon"
+4. **Batch Comparison**: Compare consumption rates across different purchase batches
 5. **Voice Input**: Integration with speech-to-text for voice messages
-6. **Image Recognition**: Parse receipts/invoyces via image input
+6. **Image Recognition**: Parse receipts/invoices via image input for automatic transaction recording
+7. **Consumption Goals**: Set daily/weekly consumption targets and track progress
+8. **Smart Shopping Lists**: Generate shopping lists based on consumption patterns and current stock
 
-All these would require only prompt additions, not complex code changes!
+All these would require only prompt additions and minor code changes thanks to the modular architecture!
 
 ---
 

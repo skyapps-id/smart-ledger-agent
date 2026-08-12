@@ -19,8 +19,18 @@ import (
 	"smart-ledger-agent/internal/entity"
 	"smart-ledger-agent/internal/llm"
 	"smart-ledger-agent/internal/repository"
-	"smart-ledger-agent/internal/waha"
 )
+
+// MessageSender abstraksi pengiriman pesan ke WhatsApp.
+type MessageSender interface {
+	Enqueue(msg Message) bool
+}
+
+// Message adalah pesan yang akan dikirim ke WhatsApp.
+type Message struct {
+	ChatID string
+	Text   string
+}
 
 // Agent adalah orchestrator utama (RFC §4.1 langkah 4-6).
 type Agent struct {
@@ -31,7 +41,7 @@ type Agent struct {
 	logRepo  repository.StockLogRepository
 	llm      llm.Extractor
 	intent   llm.IntentExtractor
-	waha     waha.Sender
+	sender   MessageSender
 	invCache *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
 	log      *slog.Logger
 }
@@ -45,7 +55,7 @@ func NewAgent(
 	logRepo repository.StockLogRepository,
 	extractor llm.Extractor,
 	intentExtractor llm.IntentExtractor,
-	sender waha.Sender,
+	sender MessageSender,
 	logger *slog.Logger,
 ) *Agent {
 	if logger == nil {
@@ -59,7 +69,7 @@ func NewAgent(
 		logRepo:  logRepo,
 		llm:      extractor,
 		intent:   intentExtractor,
-		waha:     sender,
+		sender:   sender,
 		invCache: cache.New(5*time.Minute, 10*time.Minute),
 		log:      logger,
 	}
@@ -814,12 +824,19 @@ func parseLLMDate(dateStr string) (time.Time, error) {
 	return time.Now(), fmt.Errorf("format tanggal tidak dikenali: %s (gunakan YYYY-MM-DD, DD/MM/YYYY, atau DD/MM)", dateStr)
 }
 
-// reply membungkus pengiriman WAHA dengan logging.
+// reply membungkus pengiriman pesan dengan logging.
 func (a *Agent) reply(ctx context.Context, chatID, text string) error {
-	if err := a.waha.SendText(ctx, chatID, text); err != nil {
-		a.log.ErrorContext(ctx, "gagal mengirim balasan WAHA", "err", err)
-		return err
+	msg := Message{
+		ChatID: chatID,
+		Text:   text,
 	}
+	
+	if !a.sender.Enqueue(msg) {
+		a.log.ErrorContext(ctx, "gagal meng-enqueue balasan", "chat", chatID)
+		return fmt.Errorf("gagal meng-enqueue balasan ke waha sender")
+	}
+	
+	a.log.DebugContext(ctx, "balasan di-enqueue", "chat", chatID)
 	return nil
 }
 

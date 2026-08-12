@@ -10,11 +10,12 @@ import (
 
 // Config menyimpan seluruh konfigurasi aplikasi yang dibaca dari environment.
 type Config struct {
-	App    AppConfig
-	DB     DBConfig
-	WAHA   WAHAConfig
-	LLM    LLMConfig
-	Worker WorkerConfig
+	App        AppConfig
+	DB         DBConfig
+	WAHA       WAHAConfig
+	LLM        LLMConfig
+	Worker     WorkerConfig
+	WahaSender WahaSenderConfig
 }
 
 type AppConfig struct {
@@ -45,6 +46,12 @@ type WorkerConfig struct {
 	MaxRetries  int
 }
 
+type WahaSenderConfig struct {
+	QueueSize int
+	MinDelay  int // milliseconds
+	MaxDelay  int // milliseconds
+}
+
 // Load memuat konfigurasi dari file .env (jika ada) lalu environment variable.
 func Load() (*Config, error) {
 	_ = godotenv.Load()
@@ -69,9 +76,14 @@ func Load() (*Config, error) {
 			Model:   env("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
 		},
 		Worker: WorkerConfig{
-			Concurrency: envInt("WORKER_CONCURRENCY", 4),
+			Concurrency: envInt("WORKER_CONCURRENCY", 4), // LLM workers tetap concurrent
 			QueueSize:   envInt("WORKER_QUEUE_SIZE", 256),
 			MaxRetries:  envInt("WORKER_MAX_RETRIES", 3),
+		},
+		WahaSender: WahaSenderConfig{
+			QueueSize:  envInt("WAHA_SENDER_QUEUE_SIZE", 100),
+			MinDelay:   envInt("WAHA_SENDER_MIN_DELAY_MS", 2000),  // 2 seconds
+			MaxDelay:   envInt("WAHA_SENDER_MAX_DELAY_MS", 5000),  // 5 seconds
 		},
 	}
 

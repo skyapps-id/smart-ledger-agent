@@ -17,6 +17,7 @@ import (
 	"smart-ledger-agent/internal/llm"
 	"smart-ledger-agent/internal/repository"
 	"smart-ledger-agent/internal/router"
+	"smart-ledger-agent/internal/sender"
 	"smart-ledger-agent/internal/service"
 	"smart-ledger-agent/internal/waha"
 	"smart-ledger-agent/internal/worker"
@@ -48,12 +49,25 @@ func main() {
 	// ── External clients ──
 	extractor := llm.New(cfg.LLM)
 	intentExtractor := llm.NewIntentExtractor(cfg.LLM)
-	sender := waha.New(cfg.WAHA)
+	wahaSender := waha.New(cfg.WAHA)
+
+	// ── WAHA Sender Worker (Sequential dengan Rate Limiting) ──
+	wahaProcessor := sender.NewWahaProcessor(wahaSender)
+	wahaSenderWorker := sender.New(
+		sender.Config{
+			QueueSize: cfg.WahaSender.QueueSize,
+			MinDelay:  time.Duration(cfg.WahaSender.MinDelay) * time.Millisecond,
+			MaxDelay:  time.Duration(cfg.WahaSender.MaxDelay) * time.Millisecond,
+		},
+		wahaProcessor,
+		logger,
+	)
+	wahaSenderWorker.Start()
 
 	// ── Service ──
-	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, extractor, intentExtractor, sender, logger)
+	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, extractor, intentExtractor, wahaSenderWorker, logger)
 
-	// ── Worker pool ──
+	// ── Worker pool (LLM processing, concurrent) ──
 	pool := worker.New(
 		worker.Config{
 			Concurrency: cfg.Worker.Concurrency,
@@ -85,7 +99,7 @@ func main() {
 	<-shutdownCtx.Done()
 	logger.Info("sinyal shutdown diterima, menghentikan server...")
 
-	// Graceful shutdown berurutan: HTTP -> Worker.
+	// Graceful shutdown berurutan: HTTP -> LLM Worker -> WAHA Sender.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -93,6 +107,7 @@ func main() {
 		logger.Error("graceful shutdown HTTP gagal", "err", err)
 	}
 	pool.Shutdown(ctx)
+	wahaSenderWorker.Shutdown(ctx)
 
 	logger.Info("aplikasi berhenti dengan bersih")
 }

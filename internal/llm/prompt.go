@@ -72,6 +72,14 @@ Aturan tanggal (PENTING):
 - Selalu gunakan tahun 2025 untuk perhitungan tanggal.
 - Untuk format ambigu seperti "11/08", gunakan format DD/MM (hari/bulan) yang umum di Indonesia.
 
+Aturan tanggal untuk report (get_report):
+- Untuk report dengan period "custom", WAJIB extract from_date dan to_date dari pesan.
+- Format tanggal didukut: "DD/MM/YYYY", "YYYY-MM-DD", "DD/MM/YYYY", "DD-MM-YYYY".
+- Contoh: "analisa konsumsi 01/08/2026 hingga 11/08/2026" -> from_date="01/08/2026", to_date="11/08/2026"
+- Contoh: "report 01-08-2026 to 11-08-2026" -> from_date="01/08/2026", to_date="11/08/2026"  
+- Bila periode ditulis dalam format Indonesia ( tanggal bulan), konversi ke YYYY-MM-DD.
+- Selalu gunakan tahun 4 digit untuk menghindari ambiguitas.
+
 Aturan tanggal konsumsi (PENTING):
 - Untuk barang FISIK yang disebutkan tanggal habisnya, ekstrak kedua tanggal.
 - Kata kunci: "habis", "selesai", "kosong", "habis pakai", "tahan", "sampai".
@@ -191,7 +199,8 @@ Untuk "get_report":
 - report_type (string): salah satu dari "summary", "income", "expense", "expense_by_item", "consumption", "consumption_analysis"
 - period (string): salah satu dari "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "custom", "all"
 - item_filter (string, optional): filter nama item untuk analisa spesifik
-- custom_date_range (string, optional): format "DD/MM - DD/MM" untuk custom period
+- from_date (string, optional): format "YYYY-MM-DD" atau "DD/MM/YYYY" untuk custom period start
+- to_date (string, optional): format "YYYY-MM-DD" atau "DD/MM/YYYY" untuk custom period end
 
 Untuk "record_transaction":
 - TIDAK perlu ekstrak parameter di sini, cukup set action dan data: null
@@ -204,6 +213,7 @@ Contoh output:
 {"action":"get_stock","params":{"item_filter":"kecap"}}
 {"action":"get_stock","params":{}}
 {"action":"get_report","params":{"report_type":"summary","period":"today"}}
-{"action":"get_report","params":{"report_type":"consumption_analysis","period":"custom","item_filter":"popok","custom_date_range":"01/08 - 11/08"}}
+{"action":"get_report","params":{"report_type":"consumption_analysis","period":"custom","item_filter":"popok","from_date":"01/08/2026","to_date":"11/08/2026"}}
+{"action":"get_report","params":{"report_type":"expense","period":"this_month"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

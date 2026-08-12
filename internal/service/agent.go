@@ -473,8 +473,14 @@ func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage,
 	if cdr, ok := params["custom_date_range"].(string); ok {
 		customDateRange = cdr
 	}
+	
+	// Create action object for passing to generateReport
+	action := domain.ServiceAction{
+		Action: domain.ActionGetReport,
+		Params: params,
+	}
 
-	return a.generateReport(ctx, msg, reportType, period, itemFilter, customDateRange)
+	return a.generateReport(ctx, msg, action, reportType, period, itemFilter, customDateRange)
 }
 
 // handleRecordTransaction menangani action record_transaction (pencatatan transaksi).
@@ -572,7 +578,7 @@ func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, chat
 }
 
 // generateReport membuat laporan berdasarkan parameter yang diekstrak oleh LLM.
-func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, reportType, periodType, itemFilter, customDateRange string) error {
+func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, action domain.ServiceAction, reportType, periodType, itemFilter, customDateRange string) error {
 	// Parse period ke time range
 	var from, to time.Time
 	now := time.Now()
@@ -599,13 +605,39 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 		from = firstThis.AddDate(0, -1, 0)
 		to = firstThis.Add(-time.Second)
 	case "custom":
-		// Parse custom date range format "DD/MM - DD/MM"
-		if parsedRange := parseCustomDateRange(customDateRange); parsedRange != nil {
-			from = parsedRange.from
-			to = parsedRange.to
-		} else {
-			// Fallback ke today jika parse gagal
+		// Parse tanggal langsung dari parameter LLM (from_date, to_date)
+		if fromDate, ok := action.Params["from_date"].(string); ok && fromDate != "" {
+			parsedFrom, err := parseLLMDate(fromDate)
+			if err == nil {
+				from = parsedFrom
+			} else {
+				a.log.WarnContext(ctx, "gagal parse from_date dari LLM", "from_date", fromDate, "err", err)
+				from = startOfDay(now)
+			}
+		} else if customDateRange != "" {
+			// Fallback ke parsing manual jika from_date tidak ada
+			a.log.InfoContext(ctx, "using custom_date_range fallback", "custom_date_range", customDateRange)
+			// Untuk sementara gunakan today sebagai fallback
 			from = startOfDay(now)
+			to = now
+		} else {
+			// Fallback jika tidak ada from_date
+			from = startOfDay(now)
+		}
+		
+		if toDate, ok := action.Params["to_date"].(string); ok && toDate != "" {
+			parsedTo, err := parseLLMDate(toDate)
+			if err == nil {
+				to = parsedTo
+			} else {
+				a.log.WarnContext(ctx, "gagal parse to_date dari LLM", "to_date", toDate, "err", err)
+				to = now
+			}
+		} else if customDateRange != "" {
+			// Gunakan same fallback untuk to_date
+			to = now
+		} else {
+			// Fallback jika tidak ada to_date
 			to = now
 		}
 	case "all":
@@ -696,6 +728,52 @@ func formatPeriodLabel(period string, from, to time.Time) string {
 	default:
 		return "periode ini"
 	}
+}
+
+// parseLLMDate memparsing tanggal dari LLM dengan berbagai format
+// Mendukung: "YYYY-MM-DD", "DD/MM/YYYY", "DD-MM-YYYY", "DD/MM", "DD-MM"
+// Untuk to_date, otomatis set jam ke 23:59:59 untuk include seluruh hari tersebut
+func parseLLMDate(dateStr string) (time.Time, error) {
+	if dateStr == "" {
+		return time.Now(), nil
+	}
+
+	// Try format YYYY-MM-DD dulu (standard ISO)
+	if parsed, err := time.Parse("2006-01-02", dateStr); err == nil {
+		return parsed, nil
+	}
+
+	// Try format DD/MM/YYYY (format Indonesia)
+	if parsed, err := time.Parse("02/01/2006", dateStr); err == nil {
+		// Set jam ke 23:59:59 untuk include seluruh hari
+		year := parsed.Year()
+		month := parsed.Month()
+		day := parsed.Day()
+		return time.Date(year, month, day, 23, 59, 59, 0, time.UTC), nil
+	}
+
+	// Try format DD-MM-YYYY
+	if parsed, err := time.Parse("02-01-2006", dateStr); err == nil {
+		// Set jam ke 23:59:59 untuk include seluruh hari
+		year := parsed.Year()
+		month := parsed.Month()
+		day := parsed.Day()
+		return time.Date(year, month, day, 23, 59, 59, 0, time.UTC), nil
+	}
+
+	// Try format DD/MM (hanya hari dan bulan, tahun di-set ke tahun sekarang)
+	if parsed, err := time.Parse("02/01", dateStr); err == nil {
+		year := time.Now().Year()
+		return time.Date(year, parsed.Month(), parsed.Day(), 23, 59, 59, 0, time.UTC), nil
+	}
+
+	// Try format DD-MM (hanya hari dan bulan dengan dash)
+	if parsed, err := time.Parse("02-01", dateStr); err == nil {
+		year := time.Now().Year()
+		return time.Date(year, parsed.Month(), parsed.Day(), 23, 59, 59, 0, time.UTC), nil
+	}
+
+	return time.Now(), fmt.Errorf("format tanggal tidak dikenali: %s (gunakan YYYY-MM-DD, DD/MM/YYYY, atau DD/MM)", dateStr)
 }
 
 // reply membungkus pengiriman WAHA dengan logging.

@@ -213,14 +213,27 @@ ATURAN KHUSUS: Kata "pakai" SELALU = consumption dengan action "use"
 - Contoh: "pakai popok" → {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 - Contoh: "pakai susu 2 botol" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":2,"usage_unit":"botol"}}
 
+ATURAN KHUSUS: Kata "konsumsi" SELALU = consumption
+- "konsumsi" → consumption, action: "list"
+- "konsumsi list" → consumption, action: "list"  
+- "konsumsi [barang]" → consumption, action: "info", item_name: [barang]
+- Contoh: "konsumsi" → {"action":"consumption","params":{"consumption_action":"list"}}
+- Contoh: "konsumsi list" → {"action":"consumption","params":{"consumption_action":"list"}}
+- Contoh: "konsumsi susu" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
+- Contoh: "konsumsi susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
+
 CONTOH MATCH:
 - "stok" → get_stock
-- "konsumsi" → consumption  
+- "konsumsi" → consumption (list action)
+- "konsumsi list" → consumption (list action)
+- "konsumsi susu" → consumption (info action)
 - "persediaan" → get_stock
 - "pakai susu" → consumption (use action)
 - "pakai susu uht 500ml" → consumption (use action)
 - "beli susu 50rb" → record_transaction
 - "pengeluaran hari ini" → get_report
+- "barang aktif" → consumption (list action)
+- "item aktif" → consumption (list action)
 
 Parameter extraction per action:
 
@@ -271,8 +284,9 @@ Contoh output:
 {"action":"get_stock","params":{}}
 {"action":"get_report","params":{"report_type":"summary","period":"today"}}
 {"action":"get_report","params":{"report_type":"expense","period":"this_month"}}
-{"action":"consumption","params":{"item_name":"susu"}}
 {"action":"consumption","params":{"consumption_action":"list"}}
+{"action":"consumption","params":{"consumption_action":"list"}}
+{"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}

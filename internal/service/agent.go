@@ -113,12 +113,44 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 						break
 					}
 				}
-				if pakaiIndex > 0 && len(words) > pakaiIndex+1 {
+				if pakaiIndex >= 0 && len(words) > pakaiIndex+1 {
 					itemName := strings.Join(words[pakaiIndex+1:], " ")
 					action.Params["item_name"] = itemName
 					action.Params["usage_qty"] = 1.0
 					action.Params["usage_unit"] = "pcs"
 				}
+			}
+		}
+		// Jika LLM bilang 'none' tapi pesan jelas mengandung 'konsumsi', override ke consumption
+		if strings.Contains(lowerText, "konsumsi") {
+			a.log.InfoContext(ctx, "override LLM classification: none → consumption (konsumsi command detected)")
+			action.Action = domain.ActionConsumption
+			action.Params = make(map[string]interface{})
+			
+			words := strings.Fields(lowerText)
+			// Default action is "list"
+			action.Params["consumption_action"] = "list"
+			
+			// Check if there's "list" keyword or item name after "konsumsi"
+			konsumsiIndex := -1
+			for i, word := range words {
+				if word == "konsumsi" {
+					konsumsiIndex = i
+					break
+				}
+			}
+			
+			if konsumsiIndex >= 0 {
+				// Check if next word is "list"
+				if konsumsiIndex+1 < len(words) && words[konsumsiIndex+1] == "list" {
+					action.Params["consumption_action"] = "list"
+				} else if konsumsiIndex+1 < len(words) {
+					// There's an item name after "konsumsi"
+					itemName := strings.Join(words[konsumsiIndex+1:], " ")
+					action.Params["consumption_action"] = "info"
+					action.Params["item_name"] = itemName
+				}
+				// else: just "konsumsi" alone = list
 			}
 		}
 	}

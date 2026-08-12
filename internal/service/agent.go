@@ -462,7 +462,8 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 			if qty, ok2 := params["quantity"].(float64); ok2 {
 				usageQty = qty
 			} else {
-				return a.reply(ctx, msg.ChatID, "Maaf, perlu specify jumlah pemakaian (quantity).")
+				// Default to 1 if quantity not specified
+				usageQty = 1.0
 			}
 		}
 

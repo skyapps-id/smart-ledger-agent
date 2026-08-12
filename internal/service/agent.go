@@ -19,17 +19,12 @@ import (
 	"smart-ledger-agent/internal/entity"
 	"smart-ledger-agent/internal/llm"
 	"smart-ledger-agent/internal/repository"
+	"smart-ledger-agent/internal/sender"
 )
 
 // MessageSender abstraksi pengiriman pesan ke WhatsApp.
 type MessageSender interface {
-	Enqueue(msg Message) bool
-}
-
-// Message adalah pesan yang akan dikirim ke WhatsApp.
-type Message struct {
-	ChatID string
-	Text   string
+	Enqueue(msg sender.Message) bool
 }
 
 // Agent adalah orchestrator utama (RFC §4.1 langkah 4-6).
@@ -826,7 +821,7 @@ func parseLLMDate(dateStr string) (time.Time, error) {
 
 // reply membungkus pengiriman pesan dengan logging.
 func (a *Agent) reply(ctx context.Context, chatID, text string) error {
-	msg := Message{
+	msg := sender.Message{
 		ChatID: chatID,
 		Text:   text,
 	}

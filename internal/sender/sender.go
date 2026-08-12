@@ -8,8 +8,6 @@ import (
 	"math/rand"
 	"sync"
 	"time"
-
-	"smart-ledger-agent/internal/waha"
 )
 
 // Message adalah pesan yang akan dikirim ke WhatsApp.

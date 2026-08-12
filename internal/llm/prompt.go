@@ -172,7 +172,7 @@ Action types yang tersedia:
 1. "init" - aktivasi/initialisasi ledger (contoh: "init", "mulai", "start", "daftar", "aktivasi")
 2. "help" - permintaan bantuan/panduan (contoh: "bantuan", "bantu", "panduan", "menu", "format", "help")
 3. "info" - permintaan informasi sesi/chat (contoh: "info", "sesi", "session", "identitas", "debug")
-4. "get_stock" - query stok/inventory (contoh: "stok", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
+4. "get_stock" - query stok/inventory (contoh: "stok", "stock", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
 5. "get_report" - query laporan keuangan/pemakaian (contoh: "pengeluaran hari ini", "pemasukan bulan ini", "ringkasan kemarin", "analisa konsumsi")
 6. "record_transaction" - pencatatan transaksi (income/expense/consumption)
 7. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
@@ -182,7 +182,7 @@ Aturan klasifikasi:
 - "init" bila pesan mengandung kata kunci aktivasi ledger
 - "help" bila pesan meminta panduan format
 - "info" bila pesan meminta metadata sesi
-- "get_stock" bila pesan menanyakan stok/persediaan/inventaris
+- "get_stock" bila pesan menanyakan stok/persediaan/inventaris (BAHASA INGGRIS/INDONESIA: "stock", "stok", "sisa", "persediaan", "inventaris")
 - "get_report" bila pesan menanyakan laporan keuangan/pemakaian/analisa
 - "record_transaction" bila pesan mengandung transaksi (nominal uang atau pemakaian stok)
 - "none" bila pesan adalah sapaan, chitchat, atau tidak jelas
@@ -211,6 +211,7 @@ Contoh output:
 {"action":"help","params":{}}
 {"action":"info","params":{}}
 {"action":"get_stock","params":{"item_filter":"kecap"}}
+{"action":"get_stock","params":{}}
 {"action":"get_stock","params":{}}
 {"action":"get_report","params":{"report_type":"summary","period":"today"}}
 {"action":"get_report","params":{"report_type":"consumption_analysis","period":"custom","item_filter":"popok","from_date":"01/08/2026","to_date":"11/08/2026"}}

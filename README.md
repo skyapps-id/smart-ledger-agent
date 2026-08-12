@@ -90,16 +90,16 @@ The system uses LLM as a **translator/adapter** from natural language to structu
 ```mermaid
 flowchart TD
     A[User Query: cek stock kecap] --> B[LLM Intent Classification]
-    B --> C[Classification Result<br/>Action: get_stock<br/>Params: item_filter: kecap]
+    B --> C[Classification Result<br/>Action: get_stock<br/>Params: item_filter=kecap]
     C --> D[Agent Routing<br/>Agent.Process method]
-    D --> E[Switch Action Logic<br/>Switch get_stock to handleGetStock]
+    D --> E[Switch Action Logic<br/>get_stock to handleGetStock]
     E --> F[Handler Execution<br/>handleGetStock call]
-    F --> G[Parameter Extraction<br/>Extract itemFilter: kecap]
+    F --> G[Parameter Extraction<br/>Extract itemFilter=kecap]
     G --> H[Database Query<br/>SELECT FROM inventory<br/>WHERE name LIKE kecap]
     H --> I[Result Processing<br/>Get inventory items]
     I --> J[Response Formatting<br/>formatStock function]
     J --> K[WAHA Reply<br/>Send formatted response]
-    K --> L[User Display<br/>Stok saat ini kecap:<br/>- Kecap Manis: 5 botol<br/>- Kecap Asin: 3 botol]
+    K --> L[User Display<br/>Stok saat ini kecap<br/>Kecap Manis 5 botol<br/>Kecap Asin 3 botol]
     
     style A fill:#e1f5ff
     style B fill:#fff4e6
@@ -120,7 +120,7 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph Input["Input Layer"]
-        A1[User: cek stock kecap]
+        A1[User Query cek stock kecap]
     end
     
     subgraph LLM["LLM Processing"]
@@ -129,7 +129,7 @@ flowchart LR
     end
     
     subgraph Routing["Routing Layer"]
-        C1[Agent.Process]
+        C1[Agent Process]
         C2[Switch Logic]
     end
     

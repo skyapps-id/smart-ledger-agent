@@ -189,14 +189,14 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 	smallestUnit := determineSmallestUnit(usageUnit)
 	
 	// Jika ada original unit dari nama item, gunakan untuk consumption tracking
-	finalUsageQty := usageQty
-	finalUsageUnit := usageUnit
+	finalConsumptionQty := usageQty
+	finalConsumptionUnit := usageUnit
 	finalConversionFactor := conversionFactor
 	
 	if originalUnit != "" && originalQty > 0 {
 		// Use original unit from item name for accurate tracking
-		finalUsageUnit = originalUnit
-		finalUsageQty = originalQty
+		finalConsumptionUnit = originalUnit
+		finalConsumptionQty = originalQty
 		finalConversionFactor = 1.0 // already in smallest unit
 		smallestUnit = determineSmallestUnit(originalUnit)
 	}
@@ -205,12 +205,12 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
 	if err == nil && cycle != nil {
 		// Sudah ada cycle aktif, update info penggunaan
-		cycle.ConsumedQty += finalUsageQty * finalConversionFactor
+		cycle.ConsumedQty += finalConsumptionQty * finalConversionFactor
 		cycle.ConsumedUnit = smallestUnit
 		if err := s.cycleRepo.Update(ctx, cycle); err != nil {
 			return nil, fmt.Errorf("gagal update consumption cycle: %w", err)
 		}
-		s.log.InfoContext(ctx, "consumption cycle diupdate", "item", itemName, "batch", cycle.BatchNumber, "added_qty", finalUsageQty)
+		s.log.InfoContext(ctx, "consumption cycle diupdate", "item", itemName, "batch", cycle.BatchNumber, "added_qty", finalConsumptionQty)
 		return cycle, nil
 	}
 
@@ -224,7 +224,7 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 		PurchaseQty:      usageQty,    // gunakan quantity dari inventory (pcs)
 		PurchaseUnit:     usageUnit,   // gunakan unit dari inventory (pcs)  
 		ConversionFactor: finalConversionFactor,
-		ConsumedQty:      finalUsageQty * finalConversionFactor, // tracking dalam unit asli (ml/gr)
+		ConsumedQty:      finalConsumptionQty * finalConversionFactor, // tracking dalam unit asli (ml/gr)
 		ConsumedUnit:     smallestUnit, // tracking dalam unit asli (ml/gr)
 		Status:           domain.ConsumptionCycleActive,
 	}
@@ -233,7 +233,7 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 		return nil, fmt.Errorf("gagal membuat consumption cycle: %w", err)
 	}
 
-	s.log.InfoContext(ctx, "consumption cycle dimulai dengan auto-batch", "item", itemName, "batch", batchNumber, "qty", usageQty)
+	s.log.InfoContext(ctx, "consumption cycle dimulai dengan auto-batch", "item", itemName, "batch", batchNumber, "qty", finalConsumptionQty)
 	return cycle, nil
 }
 

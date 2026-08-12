@@ -362,11 +362,20 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 
 	a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berkurang
 
-	// Sisa stok diperkirakan (best-effort untuk pesan).
-	remaining := inv.StockQty - ext.Quantity
+	// Fetch updated inventory after transaction for accurate remaining stock
+	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, ext.ItemName)
+	if err != nil {
+		// Fallback to calculation if fetch fails
+		remaining := inv.StockQty - ext.Quantity
+		return fmt.Sprintf(
+			"Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.",
+			ext.ItemName, ext.Quantity, ext.Unit, remaining, inv.Unit,
+		), nil
+	}
+
 	return fmt.Sprintf(
 		"Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.",
-		ext.ItemName, ext.Quantity, ext.Unit, remaining, inv.Unit,
+		ext.ItemName, ext.Quantity, ext.Unit, updatedInv.StockQty, updatedInv.Unit,
 	), nil
 }
 

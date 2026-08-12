@@ -190,12 +190,10 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 	
 	// Jika ada original unit dari nama item, gunakan untuk consumption tracking
 	finalConsumptionQty := usageQty
-	finalConsumptionUnit := usageUnit
 	finalConversionFactor := conversionFactor
 	
 	if originalUnit != "" && originalQty > 0 {
 		// Use original unit from item name for accurate tracking
-		finalConsumptionUnit = originalUnit
 		finalConsumptionQty = originalQty
 		finalConversionFactor = 1.0 // already in smallest unit
 		smallestUnit = determineSmallestUnit(originalUnit)

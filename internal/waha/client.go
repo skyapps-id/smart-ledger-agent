@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"smart-ledger-agent/internal/config"
@@ -19,19 +21,45 @@ type Sender interface {
 	SendText(ctx context.Context, chatID, text string) error
 }
 
-// New membuat klien WAHA.
+// New membuat klien WAHA dengan rate limiting untuk menghindari ban WhatsApp.
 func New(cfg config.WAHAConfig) Sender {
-	return &wahaClient{
+	client := &wahaClient{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		lastMessageTime: make(map[string]time.Time),
+		mu:             sync.Mutex{},
 	}
+	
+	// Start background cleanup goroutine for lastMessageTime map
+	go client.cleanupLastMessageTime()
+	
+	return client
 }
 
 type wahaClient struct {
-	cfg        config.WAHAConfig
-	httpClient *http.Client
+	cfg            config.WAHAConfig
+	httpClient     *http.Client
+	lastMessageTime map[string]time.Time // chatID -> last sent time
+	mu             sync.Mutex
+}
+
+// cleanupLastMessageTime removes entries older than 1 hour to prevent memory leak
+func (c *wahaClient) cleanupLastMessageTime() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		c.mu.Lock()
+		cutoff := time.Now().Add(-1 * time.Hour)
+		for chatID, lastTime := range c.lastMessageTime {
+			if lastTime.Before(cutoff) {
+				delete(c.lastMessageTime, chatID)
+			}
+		}
+		c.mu.Unlock()
+	}
 }
 
 type sendTextRequest struct {
@@ -40,8 +68,44 @@ type sendTextRequest struct {
 	Session string `json:"session"`
 }
 
-// SendText mengirim pesan teks ke chatID (nomor WA, format: 62xxx@c.us).
+// SendText mengirim pesan teks ke chatID (nomor WA, format: 62xxx@c.us)
+// dengan human-like delay untuk menghindari ban WhatsApp.
 func (c *wahaClient) SendText(ctx context.Context, chatID, text string) error {
+	// Calculate delay based on last message time to this chat
+	c.mu.Lock()
+	lastTime, exists := c.lastMessageTime[chatID]
+	c.mu.Unlock()
+	
+	var delay time.Duration
+	if exists {
+		// Add delay between 2-5 seconds for same chat to mimic human typing
+		elapsed := time.Since(lastTime)
+		minDelay := 2 * time.Second
+		maxDelay := 5 * time.Second
+		
+		if elapsed < minDelay {
+			// Need to wait more
+			delay = minDelay - elapsed
+			// Add some randomness to make it more human-like
+			delay += time.Duration(rand.Intn(2000)) * time.Millisecond // 0-2s random
+		} else if elapsed < maxDelay {
+			// Small random delay even if we waited enough
+			delay = time.Duration(rand.Intn(1000)) * time.Millisecond // 0-1s random
+		}
+	} else {
+		// First message to this chat, minimal delay
+		delay = time.Duration(rand.Intn(500)) * time.Millisecond // 0-0.5s random
+	}
+	
+	// Apply the delay if needed
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return fmt.Errorf("delay dibatalkan: %w", ctx.Err())
+		}
+	}
+	
 	payload := sendTextRequest{
 		ChatID:  chatID,
 		Text:    text,
@@ -76,5 +140,11 @@ func (c *wahaClient) SendText(ctx context.Context, chatID, text string) error {
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("waha sendText status %d", resp.StatusCode)
 	}
+	
+	// Update last message time for this chat
+	c.mu.Lock()
+	c.lastMessageTime[chatID] = time.Now()
+	c.mu.Unlock()
+	
 	return nil
 }

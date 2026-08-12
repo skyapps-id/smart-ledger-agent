@@ -207,11 +207,18 @@ Aturan klasifikasi (Sederhana dan Jelas):
 - "record_transaction": bila ada NOMINAL UANG (rb, jt, rp, rupiah) atau kata "beli", "bayar" di pesan
 - "none": untuk sapaan (halo, hai, pagi), chitchat, atau tidak jelas
 
+ATURAN KHUSUS: Kata "pakai" SELALU = consumption dengan action "use"
+- "pakai [barang]" → consumption, action: "use", item_name: [barang]
+- Contoh: "pakai susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
+- Contoh: "pakai popok" → {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
+- Contoh: "pakai susu 2 botol" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":2,"usage_unit":"botol"}}
+
 CONTOH MATCH:
 - "stok" → get_stock
 - "konsumsi" → consumption  
 - "persediaan" → get_stock
-- "pakai susu" → consumption
+- "pakai susu" → consumption (use action)
+- "pakai susu uht 500ml" → consumption (use action)
 - "beli susu 50rb" → record_transaction
 - "pengeluaran hari ini" → get_report
 
@@ -269,8 +276,9 @@ Contoh output:
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
-{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":500,"usage_unit":"ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":1,"usage_unit":"pcs"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"kecap botol","usage_qty":1,"usage_unit":"botol"}}
 {"action":"consumption","params":{"consumption_action":"complete","item_name":"susu uht 500ml","batch_number":"AUG-12-135918"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

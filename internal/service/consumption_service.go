@@ -598,3 +598,77 @@ func (s *ConsumptionService) CalculateDailyConsumption(ctx context.Context, chat
 
 	return result, nil
 }
+
+// UpdateConsumption mengupdate nilai konsumsi untuk cycle yang sudah ada (koreksi data)
+func (s *ConsumptionService) UpdateConsumption(ctx context.Context, chatID, itemName, batchNumber string, consumedQty float64, consumedUnit string) (string, error) {
+	// Cari cycle aktif untuk item+batch ini
+	var cycle *domain.ConsumptionCycle
+	var err error
+
+	if batchNumber != "" {
+		cycle, err = s.cycleRepo.GetActiveByItemAndBatch(ctx, chatID, itemName, batchNumber)
+	} else {
+		cycle, err = s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
+	}
+
+	if err != nil {
+		batchInfo := ""
+		if batchNumber != "" {
+			batchInfo = fmt.Sprintf(" (batch %s)", batchNumber)
+		}
+		return "", fmt.Errorf("tidak ada siklus aktif untuk %s%s", itemName, batchInfo)
+	}
+
+	// Update consumed quantity (replace, bukan tambah)
+	cycle.ConsumedQty = consumedQty
+	cycle.ConsumedUnit = consumedUnit
+
+	if err := s.cycleRepo.Update(ctx, cycle); err != nil {
+		return "", fmt.Errorf("gagal update consumption cycle: %w", err)
+	}
+
+	// Hitung ulang info untuk display
+	daysInUse := time.Since(cycle.StartDate).Hours() / 24
+	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
+	totalConsumedInSmallestUnit := cycle.ConsumedQty * cycle.ConversionFactor
+	remainingInSmallestUnit := totalPurchasedInSmallestUnit - totalConsumedInSmallestUnit
+
+	dailyRateInSmallestUnit := 0.0
+	if daysInUse > 0 && totalConsumedInSmallestUnit > 0 {
+		dailyRateInSmallestUnit = totalConsumedInSmallestUnit / daysInUse
+	}
+
+	estimationDays := 0
+	if dailyRateInSmallestUnit > 0 && remainingInSmallestUnit > 0 {
+		estimationDays = int(remainingInSmallestUnit / dailyRateInSmallestUnit)
+	}
+
+	// Determine the correct display unit based on both purchase unit and item name
+	displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
+	if displayUnit == "gr" {
+		// Check if item name suggests liquid
+		displayUnit = determineSmallestUnitFromName(itemName)
+	}
+
+	itemLabel := itemName
+	if cycle.BatchNumber != "" {
+		itemLabel = fmt.Sprintf("%s (%s)", itemName, cycle.BatchNumber)
+	}
+
+	s.log.InfoContext(ctx, "consumption cycle diupdate (koreksi)", "item", itemName, "batch", cycle.BatchNumber, "new_consumed_qty", consumedQty, "new_consumed_unit", consumedUnit)
+
+	return fmt.Sprintf(
+		"✅ Konsumisi %s diupdate!\n"+
+			"📉 Terpakai: %.0f %s\n"+
+			"📊 Sisa: %.0f %s (%.1f %s)\n"+
+			"📈 Rate: %.1f %s/hari\n"+
+			"🔮 Estimasi: %d hari lagi\n"+
+			"📅 Mulai: %s",
+		itemLabel,
+		totalConsumedInSmallestUnit, displayUnit,
+		remainingInSmallestUnit, displayUnit, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
+		dailyRateInSmallestUnit, displayUnit,
+		estimationDays,
+		cycle.StartDate.Format("02/01/2006"),
+	), nil
+}

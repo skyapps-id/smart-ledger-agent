@@ -578,6 +578,31 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, 0.0, "")
 		return err // handleUsageWithConsumption already sends reply
 
+	case "update":
+		// "terpakai" - update nilai konsumsi untuk cycle yang sudah ada
+		batchNumber, _ := params["batch_number"].(string)
+		if batchNumber == "" {
+			return a.reply(ctx, msg.ChatID, "Maaf, perlu sebut batch number untuk update konsumsi. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"")
+		}
+		
+		updateQty, ok := params["usage_qty"].(float64)
+		if !ok {
+			return a.reply(ctx, msg.ChatID, "Maaf, perlu sebut jumlah konsumsi untuk update. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"")
+		}
+		
+		updateUnit, _ := params["usage_unit"].(string)
+		if updateUnit == "" {
+			updateUnit = "ml" // default unit
+		}
+		
+		// Update consumption cycle
+		result, err = a.consumptionService.UpdateConsumption(ctx, msg.ChatID, itemName, batchNumber, updateQty, updateUnit)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal update konsumsi: %v", err))
+		}
+		
+		return a.reply(ctx, msg.ChatID, result)
+
 	case "complete", "finish":
 		// "habis" - selesaikan consumption cycle
 		batchNumber, _ := params["batch_number"].(string)

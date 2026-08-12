@@ -193,7 +193,7 @@ Action types yang tersedia:
 3. "info" - permintaan informasi sesi/chat (contoh: "info", "sesi", "session", "identitas", "debug")
 4. "get_stock" - query stok/inventory (contoh: "stok", "stock", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
 5. "get_report" - query laporan keuangan/pemakaian (contoh: "pengeluaran hari ini", "pemasukan bulan ini", "ringkasan kemarin", "analisa konsumsi")
-6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi", "konsumsi susu", "konsumsi susu uht", "pemakaian", "pemakaian barang", "analisa pemakaian popok", "barang aktif", "item aktif")
+6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi", "konsumsi susu", "konsumsi susu uht", "pemakaian", "pemakaian barang", "analisa pemakaian popok", "barang aktif", "item aktif", "terpakai", "sudah terpakai")
 7. "record_transaction" - pencatatan transaksi (income/expense/consumption)
 8. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
 
@@ -221,6 +221,11 @@ ATURAN KHUSUS: Kata "konsumsi" SELALU = consumption
 - Contoh: "konsumsi list" → {"action":"consumption","params":{"consumption_action":"list"}}
 - Contoh: "konsumsi susu" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
 - Contoh: "konsumsi susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
+
+ATURAN KHUSUS: Kata "terpakai" = consumption dengan action "update"
+- "terpakai [item] [batch] [jumlah]" → consumption, action: "update", batch_number: [batch], usage_qty: [jumlah]
+- Contoh: "terpakai susu uht 500ml (AUG-12-152714) 100ml" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
+- Contoh: "sudah terpakai 50ml dari batch AUG-12-152714" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
 
 CONTOH MATCH:
 - "stok" → get_stock
@@ -252,16 +257,17 @@ Untuk "get_report":
 
 Untuk "consumption":
 - item_name (string, optional): nama barang untuk melihat konsumsi
-- consumption_action (string, optional): salah satu dari "info", "list", "use", "complete", "calculate", "history" - default "info"
+- consumption_action (string, optional): salah satu dari "info", "list", "use", "complete", "calculate", "history", "update" - default "info"
 - Untuk "info": tampilkan info konsumsi aktif untuk item spesifik
 - Untuk "list": tampilkan semua item yang sedang aktif dikonsumsi
-- Untuk "use": mulai/catat pemakaian barang 
+- Untuk "use": mulai/catat pemakaian barang baru
+- Untuk "update": update nilai konsumsi untuk cycle yang sudah ada (koreksi data)
 - Untuk "complete": selesaikan siklus konsumsi (barang habis)
 - Untuk "calculate": hitung konsumsi harian
 - Untuk "history": tampilkan history konsumsi item
-- usage_qty (number, optional): jumlah pemakaian untuk action "use" - default 1 jika tidak disebutkan
-- usage_unit (string, optional): satuan pemakaian untuk action "use" - default "pcs" jika tidak disebutkan
-- batch_number (string, optional): nomor batch untuk action "complete"
+- usage_qty (number, optional): jumlah pemakaian untuk action "use" atau "update" - default 1 jika tidak disebutkan
+- usage_unit (string, optional): satuan pemakaian untuk action "use" atau "update" - default "pcs" jika tidak disebutkan
+- batch_number (string, optional): nomor batch untuk action "update" atau "complete"
 
 Aturan khusus untuk action "use":
 - OTOMATIS deteksi: Jika user sebut "pakai [item dengan unit]" tanpa jumlah jelas, asumsikan 1 pcs/unit inventory
@@ -290,6 +296,8 @@ Contoh output:
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
+{"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
+{"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"kecap botol","usage_qty":1,"usage_unit":"botol"}}

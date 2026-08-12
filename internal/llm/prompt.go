@@ -15,7 +15,7 @@ Tugas: ubah pesan WhatsApp pengguna menjadi SATU objek JSON valid (TANPA markdow
 Aturan klasifikasi "type":
 - "INCOME": penambahan uang (contoh: "gaji masuk 10jt").
 - "EXPENSE": pengeluaran uang untuk barang/jasa (contoh: "beli bensin 50rb").
-- "CONSUMPTION": pemakaian stok barang TANPA uang (contoh: "ambil susu 2 pcs").
+- "CONSUMPTION": pemakaian stok barang TANPA uang (contoh: "ambil susu 2 pcs"). PENTING: Harus sesuai dengan nama barang PERSIS di inventory.
 - "NONE": pesan BUKAN transaksi (sapaan, chitchat, salam, terima kasih, pertanyaan umum ke manusia, emoji, kosong). Contoh: "halo", "hai", "pagi", "makasih", "apa kabar". Jangan dipaksakan menjadi EXPENSE.
 
 Aturan klasifikasi "category" untuk EXPENSE (PENTING):
@@ -35,6 +35,12 @@ Aturan ambiguitas (PENTING):
 - Jika pesan menyebut nominal uang (mis. "50rb", "500k", "5jt") MAKA prioritaskan "EXPENSE".
 - "CONSUMPTION" HANYA bila TIDAK ada nominal uang sama sekali. Set "amount": 0.
 - Untuk EXPENSE tanpa nominal uang yang disebutkan (misal "beli popok 100pcs"), set "amount": 0 dan tetap proses sebagai pembelian barang.
+
+Aturan konsumsi stok (PENTING):
+- Untuk CONSUMPTION, item_name harus SAMA PERSIS dengan nama barang di inventory.
+- Contoh: Jika inventory ada "susu bmt 400gr" dan user bilang "ambil susu 200gr", extraction harus gunakan "susu 200gr" (bukan "susu bmt 400gr").
+- Sistem akan menolak konsumsi bila barang tidak ditemukan di inventory dengan nama PERSIS sama.
+- Tidak boleh memaksa match barang berbeda ukuran/berat.
 
 Aturan "affects_stock" (HANYA untuk EXPENSE):
 - true  : barang FISIK yang disimpan/ditabung stok (sembako, perlengkapan rumah, bahan isi ulang). Contoh: susu UHT 1 dus, minyak goreng 2 liter, air mineral 1 dus.
@@ -125,6 +131,8 @@ Contoh keluaran:
 {"type":"EXPENSE","category":"MINUMAN","item_name":"susu bmt 400gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MINUMAN","item_name":"kopi 100gr","quantity":10,"unit":"pcs","amount":50000,"affects_stock":true,"notes":"100g per pcs","transaction_date":"2025-08-11","consumption_date":"2025-08-30","total_consumption":500}
 {"type":"EXPENSE","category":"MINUMAN","item_name":"kopi 200gr","quantity":5,"unit":"pcs","amount":35000,"affects_stock":true,"notes":"200g per pcs","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu bmt 200gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu bmt 400gr","quantity":2,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2025-08-10","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"2025-08-09","consumption_date":"","total_consumption":0}
 {"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":"2025-08-01","consumption_date":"","total_consumption":0}

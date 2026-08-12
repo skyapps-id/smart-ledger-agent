@@ -736,14 +736,6 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 		periodStruct := period{from: from, to: to, label: periodLabel}
 		return a.reply(ctx, msg.ChatID, formatConsumption(periodStruct, moves))
 
-	case "consumption_analysis":
-		analysis, err := generateConsumptionAnalysis(ctx, a.db, a.logRepo, msg.ChatID, from, to, itemFilter)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal generate analisa konsumsi", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal membuat analisa konsumsi.")
-		}
-		return a.reply(ctx, msg.ChatID, analysis)
-
 	default:
 		return a.reply(ctx, msg.ChatID, "Maaf, tipe laporan tidak dikenali.")
 	}

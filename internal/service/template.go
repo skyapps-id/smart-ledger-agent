@@ -34,10 +34,9 @@ LAPORAN (tanya aja):
 > Hari ini pakai apa aja? (stok keluar)
 > Ringkasan kemarin
 > Pemakaian barang minggu ini
-> Analisa konsumsi bulan ini (rate & durasi pemakaian per barang)
-> Analisa konsumsi popok 01/08 hingga 11/08 (analisa per item + custom tanggal)
+> Pemakaian barang per item kemarin
 
-QUERY STOK (semua variasi):
+QUERY STOK (semua variations):
 > stok
 > sisa
 > persediaan

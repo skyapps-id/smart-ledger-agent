@@ -82,8 +82,8 @@ func Load() (*Config, error) {
 		},
 		WahaSender: WahaSenderConfig{
 			QueueSize: envInt("WAHA_SENDER_QUEUE_SIZE", 100),
-			MinDelay:  envInt("WAHA_SENDER_MIN_DELAY_MS", 2000), // 2 seconds
-			MaxDelay:  envInt("WAHA_SENDER_MAX_DELAY_MS", 5000), // 5 seconds
+			MinDelay:  envInt("WAHA_SENDER_MIN_DELAY_MS", 500),  // 0.5 seconds
+			MaxDelay:  envInt("WAHA_SENDER_MAX_DELAY_MS", 2000), // 2 seconds
 		},
 	}
 

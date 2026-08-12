@@ -85,16 +85,81 @@ The system uses LLM as a **translator/adapter** from natural language to structu
 
 #### How It Works: "Cek Stock Kecap" Example
 
+**🔄 Full Flow Architecture:**
+
 ```mermaid
 flowchart TD
-    A[User: "cek stock kecap"] --> B[🤖 LLM Intent Classification]
-    B --> C[Action: get_stock<br/>Params: item_filter: kecap]
-    C --> D[🔀 Agent Routing<br/>Agent.Process]
-    D --> E[🎯 handleGetStock]
-    E --> F[📊 Extract Parameters<br/>item_filter: kecap]
-    F --> G[🗄️ Query Inventory<br/>WHERE name LIKE %kecap%]
-    G --> H[📝 Format Response<br/>formatStock]
-    H --> I[📤 Reply via WAHA<br/>Stok saat ini kecap:<br/>- Kecap Manis: 5 botol<br/>- Kecap Asin: 3 botol]
+    A[👤 User Query: "cek stock kecap"] --> B[🤖 LLM Intent Classification]
+    B --> C[📊 Classification Result<br/>Action: get_stock<br/>Params: item_filter: kecap]
+    C --> D[🔀 Agent Routing<br/>Agent.Process method]
+    D --> E[⚙️ Switch Action Logic<br/>Switch get_stock → handleGetStock]
+    E --> F[🎯 Handler Execution<br/>handleGetStock call]
+    F --> G[📋 Parameter Extraction<br/>Extract itemFilter: kecap]
+    G --> H[🗄️ Database Query<br/>SELECT FROM inventory<br/>WHERE name LIKE %kecap%]
+    H --> I[📊 Result Processing<br/>Get inventory items]
+    I --> J[📝 Response Formatting<br/>formatStock function]
+    J --> K[📤 WAHA Reply<br/>Send formatted response]
+    K --> L[👀 User Display<br/>Stok saat ini kecap:<br/>- Kecap Manis: 5 botol<br/>- Kecap Asin: 3 botol]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff4e6
+    style C fill:#fff4e6
+    style D fill:#f0f0ff
+    style E fill:#f0f0ff
+    style F fill:#e8f5e9
+    style G fill:#e8f5e9
+    style H fill:#fce4ec
+    style I fill:#fce4ec
+    style J fill:#fff9c4
+    style K fill:#fff9c4
+    style L fill:#e1f5ff
+```
+
+**📍 Step-by-Step Breakdown:**
+
+```mermaid
+flowchart LR
+    subgraph Input["📥 Input Layer"]
+        A1[User: cek stock kecap]
+    end
+    
+    subgraph LLM["🤖 LLM Processing"]
+        B1[Intent Classification]
+        B2[Parameter Extraction]
+    end
+    
+    subgraph Routing["🔀 Routing Layer"]
+        C1[Agent.Process]
+        C2[Switch Logic]
+    end
+    
+    subgraph Handler["🎯 Handler Layer"]
+        D1[handleGetStock]
+        D2[Parameter Parse]
+    end
+    
+    subgraph Data["🗄️ Data Layer"]
+        E1[DB Query]
+        E2[Result Processing]
+    end
+    
+    subgraph Output["📤 Output Layer"]
+        F1[Format Response]
+        F2[WAHA Send]
+        F3[User Display]
+    end
+    
+    A1 --> B1
+    B1 --> B2
+    B2 --> C1
+    C1 --> C2
+    C2 --> D1
+    D1 --> D2
+    D2 --> E1
+    E1 --> E2
+    E2 --> F1
+    F1 --> F2
+    F2 --> F3
 ```
 
 #### Supported Query Patterns

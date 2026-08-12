@@ -157,6 +157,26 @@ func (a *Agent) handleIncome(ctx context.Context, msg entity.IncomingMessage, ex
 func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
 	var inv *domain.Inventory
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Skip financial transaction creation if amount is 0 but affects stock (inventory-only update)
+		if ext.Amount == 0 && ext.AffectsStock {
+			upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, ext.ItemName, ext.Quantity, ext.Unit)
+			if err != nil {
+				return fmt.Errorf("tambah stok: %w", err)
+			}
+			inv = upserted
+
+			log := &domain.StockLog{
+				InventoryID: inv.ID,
+				ChangeType:  domain.StockIn,
+				Quantity:    ext.Quantity,
+				Notes:       ext.Notes,
+			}
+			if err := a.logRepo.WithTx(tx).Create(ctx, log); err != nil {
+				return fmt.Errorf("catat stock log IN: %w", err)
+			}
+			return nil
+		}
+
 		txnDate, err := parseTransactionDate(ext.TransactionDate)
 		if err != nil {
 			return fmt.Errorf("format tanggal tidak valid: %w", err)
@@ -216,6 +236,15 @@ func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, e
 	// Balasan berbeda tergantung apakah stok ikut tercatat.
 	if inv != nil {
 		a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berubah
+
+		// Jika amount=0 tapi stok terupdate, berarti ini inventory-only update
+		if ext.Amount == 0 {
+			return fmt.Sprintf(
+				"Stok tercatat: %s +%g %s. Stok saat ini: %g %s.",
+				ext.ItemName, ext.Quantity, ext.Unit,
+				inv.StockQty, inv.Unit,
+			), nil
+		}
 
 		// Parse conversion info dari notes (misal "100g per pcs")
 		perUnitQty, perUnitUnit := parseConversionInfo(ext.Notes)

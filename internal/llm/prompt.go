@@ -34,6 +34,7 @@ Aturan saldo awal (PENTING):
 Aturan ambiguitas (PENTING):
 - Jika pesan menyebut nominal uang (mis. "50rb", "500k", "5jt") MAKA prioritaskan "EXPENSE".
 - "CONSUMPTION" HANYA bila TIDAK ada nominal uang sama sekali. Set "amount": 0.
+- Untuk EXPENSE tanpa nominal uang yang disebutkan (misal "beli popok 100pcs"), set "amount": 0 dan tetap proses sebagai pembelian barang.
 
 Aturan "affects_stock" (HANYA untuk EXPENSE):
 - true  : barang FISIK yang disimpan/ditabung stok (sembako, perlengkapan rumah, bahan isi ulang). Contoh: susu UHT 1 dus, minyak goreng 2 liter, air mineral 1 dus.

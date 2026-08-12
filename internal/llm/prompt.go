@@ -38,8 +38,9 @@ Aturan ambiguitas (PENTING):
 
 Aturan konsumsi stok (PENTING):
 - Untuk CONSUMPTION, item_name harus SAMA PERSIS dengan nama barang di inventory.
-- Contoh: Jika inventory ada "susu bmt 400gr" dan user bilang "ambil susu 200gr", extraction harus gunakan "susu 200gr" (bukan "susu bmt 400gr").
-- Sistem akan menolak konsumsi bila barang tidak ditemukan di inventory dengan nama PERSIS sama.
+- System akan melakukan konversi unit secara kontekstual berdasarkan satuan yang tersedia di inventory.
+- Contoh: Jika inventory ada "susu uht 500ml" (3 pcs) dan user bilang "pakai susu uht 500ml 100ml", system harus mengkonversi: 100ml ÷ 500ml = 0.2 pcs.
+- System akan menolak konsumsi bila barang tidak ditemukan di inventory dengan nama PERSIS sama.
 - Tidak boleh memaksa match barang berbeda ukuran/berat.
 
 Aturan "affects_stock" (HANYA untuk EXPENSE):
@@ -236,9 +237,11 @@ Untuk "consumption":
 
 Aturan khusus untuk action "use":
 - Jika user menyebut "pakai [item]" tanpa jumlah, set usage_qty = 1 dan usage_unit = "pcs" (default)
-- Contoh: "pakai susu uht 500ml" → usage_qty: 1, usage_unit: "pcs"
-- Contoh: "pakai susu 2 botol" → usage_qty: 2, usage_unit: "botol"
-- Jika item mengandung satuan (ml, gr, kg, liter), gunakan satuan stok yang ada di inventory
+- Cerdas dalam konversi unit: Jika inventory dalam pcs tapi user minta ml/gr, LLM harus mengkonversi secara kontekstual
+- Contoh: "pakai susu uht 500ml 100ml" → usage_qty: 0.2, usage_unit: "pcs" (asumsi 1 pcs = 500ml)
+- Contoh: "pakai susu uht 500ml 1 botol" → usage_qty: 1, usage_unit: "botol" (langsung gunakan unit user)
+- Prioritaskan unit yang disebutkan user, gunakan "pcs" hanya sebagai default
+- Gunakan konteks dan common sense untuk konversi (500ml per botol, 1kg per pcs, dll)
 
 Untuk "record_transaction":
 - TIDAK perlu ekstrak parameter di sini, cukup set action dan data: null
@@ -259,7 +262,8 @@ Contoh output:
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":1,"usage_unit":"pcs"}}
-{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":2,"usage_unit":"botol"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":0.2,"usage_unit":"pcs"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"botol"}}
 {"action":"consumption","params":{"consumption_action":"complete","item_name":"susu uht 500ml","batch_number":"AUG-12-135918"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

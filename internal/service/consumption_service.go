@@ -399,7 +399,8 @@ func (s *ConsumptionService) GetActiveCycleInfo(ctx context.Context, chatID, ite
 			"📊 Sisa: %.0f %s (%.1f %s)\n"+
 			"📈 Rate: %.1f %s/hari\n"+
 			"🔮 Estimasi: %d hari lagi\n"+
-			"Status: %s",
+			"Status: %s\n\n"+
+			"💡 Koreksi data: ketik \"terpakai %s (%s) [jumlah] [unit]\"",
 		itemLabel,
 		status,
 		cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit, displayUnit, cycle.StartDate.Format("02/01/2006"),
@@ -409,6 +410,7 @@ func (s *ConsumptionService) GetActiveCycleInfo(ctx context.Context, chatID, ite
 		dailyRateInSmallestUnit, displayUnit,
 		estimationDays,
 		cycle.Status,
+		cycle.ItemName, cycle.BatchNumber,
 	), nil
 }
 

@@ -20,6 +20,8 @@ PEMASUKAN:
 PEMAKAIAN STOK:
 > Ambil susu UHT 2 pcs
 > Pakai air mineral 1 pcs
+> Konsumsi list (lihat barang aktif)
+> Terpakai susu uht 500ml (AUG-12-152714) 100ml (koreksi data konsumsi)
 
 ANALISA KONSUMSI (ADVANCED):
 > Kopi 100g beli 10pcs tanggal 11/08 tapi habis 500g di 30/08

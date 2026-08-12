@@ -153,6 +153,72 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 				// else: just "konsumsi" alone = list
 			}
 		}
+		
+		// Jika LLM bilang 'none' tapi pesan jelas mengandung 'terpakai', override ke consumption update
+		if strings.Contains(lowerText, "terpakai") {
+			a.log.InfoContext(ctx, "override LLM classification: none → consumption update (terpakai command detected)")
+			action.Action = domain.ActionConsumption
+			action.Params = make(map[string]interface{})
+			action.Params["consumption_action"] = "update"
+			
+			// Extract item name and batch number from pattern
+			// Pattern: terpakai [item] (BATCH-XXX) [jumlah] [unit]
+			// Example: "terpakai susu uht 500ml (AUG-12-152714) 100ml"
+			
+			// Extract content between parentheses for batch number
+			batchStart := strings.Index(lowerText, "(")
+			batchEnd := strings.Index(lowerText, ")")
+			if batchStart >= 0 && batchEnd > batchStart {
+				action.Params["batch_number"] = strings.TrimSpace(lowerText[batchStart+1 : batchEnd])
+			}
+			
+			// Find "terpakai" position
+			words := strings.Fields(lowerText)
+			terpakaiIndex := -1
+			for i, word := range words {
+				if word == "terpakai" || word == "sudah" && i+1 < len(words) && words[i+1] == "terpakai" {
+					terpakaiIndex = i
+					if word == "sudah" {
+						terpakaiIndex = i + 1 // advance to "terpakai"
+					}
+					break
+				}
+			}
+			
+			// Extract item name (after "terpakai" before batch)
+			if terpakaiIndex >= 0 && terpakaiIndex+1 < len(words) {
+				itemName := ""
+				for i := terpakaiIndex + 1; i < len(words); i++ {
+					word := words[i]
+					if strings.HasPrefix(word, "(") {
+						break // stop at batch number
+					}
+					if itemName == "" {
+						itemName = word
+					} else {
+						itemName += " " + word
+					}
+				}
+				if itemName != "" {
+					action.Params["item_name"] = itemName
+				}
+			}
+			
+			// Extract quantity and unit (last number + unit in message)
+			for i := len(words) - 1; i >= 0; i-- {
+				word := words[i]
+				// Check if word ends with number followed by unit
+				re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|gr|gram|liter|l|pcs)`)
+				matches := re.FindStringSubmatch(word)
+				if len(matches) >= 3 {
+					if qty, err := strconv.ParseFloat(matches[1], 64); err == nil {
+						action.Params["usage_qty"] = qty
+						action.Params["usage_unit"] = matches[2]
+						break
+					}
+				}
+			}
+		}
 	}
 
 	// Route berdasarkan action yang diklasifikasikan oleh LLM

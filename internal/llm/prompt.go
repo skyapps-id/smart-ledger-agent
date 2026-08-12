@@ -224,8 +224,11 @@ ATURAN KHUSUS: Kata "konsumsi" SELALU = consumption
 
 ATURAN KHUSUS: Kata "terpakai" = consumption dengan action "update"
 - "terpakai [item] [batch] [jumlah]" → consumption, action: "update", batch_number: [batch], usage_qty: [jumlah]
+- "sudah terpakai [item] [batch] [jumlah]" → consumption, action: "update", batch_number: [batch], usage_qty: [jumlah]
+- Ini untuk KOREKSI DATA, bukan mengurangi stok! Stok tetap, hanya update nilai konsumsi.
 - Contoh: "terpakai susu uht 500ml (AUG-12-152714) 100ml" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
 - Contoh: "sudah terpakai 50ml dari batch AUG-12-152714" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
+- Contoh: "terpakai susu (AUG-12-152714) 200ml" → {"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":200,"usage_unit":"ml"}}
 
 CONTOH MATCH:
 - "stok" → get_stock

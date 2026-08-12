@@ -372,6 +372,25 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 		return "", fmt.Errorf("cari inventaris: %w", err)
 	}
 
+	// Extract satuan asli dari nama item untuk consumption tracking
+	// Contoh: "susu uht 500ml" → satuan asli: "500ml"
+	originalUnit := a.extractOriginalUnitFromItemName(ext.ItemName)
+	
+	// Jika user menyebutkan satuan spesifik dalam consumption, gunakan itu sebagai satuan asli
+	if ext.Unit != "pcs" && ext.Unit != "" {
+		originalUnit = ext.Unit
+	}
+
+	// Konversi quantity ke satuan asli untuk consumption tracking
+	// Contoh: inventory 1 pcs (500ml), user pakai 1 pcs → consumption: 500ml
+	quantityInOriginalUnit := ext.Quantity
+	if originalUnit != "" && ext.Unit == "pcs" {
+		// User sebut "pakai susu uht 500ml" (1 pcs) → extract qty dari nama item
+		if extractedQty := a.extractQuantityFromItemName(ext.ItemName); extractedQty > 0 {
+			quantityInOriginalUnit = extractedQty
+		}
+	}
+
 	// Validasi stok cukup (pesan informatif). Pengurangan tetap atomik di tx.
 	if inv.StockQty < ext.Quantity {
 		return "", &businessError{
@@ -383,7 +402,7 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 	}
 
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Kurangi stok
+		// Kurangi stok dalam unit inventory (pcs)
 		if err := a.invRepo.WithTx(tx).DecreaseStock(ctx, inv.ID, ext.Quantity); err != nil {
 			return err
 		}
@@ -399,9 +418,13 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 			return err
 		}
 
-		// Start/update consumption cycle dengan conversion factor default
-		conversionFactor := 1.0 // default, bisa diupdate nanti
-		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, ext.ItemName, ext.Quantity, ext.Unit, conversionFactor)
+		// Start/update consumption cycle dengan quantity dalam satuan asli (ml/gr)
+		conversionFactor := 1.0 // default, akan diupdate berdasarkan unit asli
+		if originalUnit != "" {
+			conversionFactor = a.getConversionFactor(originalUnit)
+		}
+		
+		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, ext.ItemName, quantityInOriginalUnit, originalUnit, conversionFactor)
 		return err
 	})
 	if err != nil {
@@ -421,14 +444,14 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 		// Fallback to calculation if fetch fails
 		remaining := inv.StockQty - ext.Quantity
 		return fmt.Sprintf(
-			"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
-			ext.ItemName, ext.Quantity, ext.Unit, remaining, inv.Unit,
+			"🔄 Pemakaian tercatat: %s -%g %s (%g %s dari stok). Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
+			ext.ItemName, ext.Quantity, ext.Unit, quantityInOriginalUnit, originalUnit, remaining, inv.Unit,
 		), nil
 	}
 
 	return fmt.Sprintf(
-		"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
-		ext.ItemName, ext.Quantity, ext.Unit, updatedInv.StockQty, updatedInv.Unit,
+		"🔄 Pemakaian tercatat: %s -%g %s (%g %s dari stok). Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
+		ext.ItemName, ext.Quantity, ext.Unit, quantityInOriginalUnit, originalUnit, updatedInv.StockQty, updatedInv.Unit,
 	), nil
 }
 
@@ -1233,4 +1256,91 @@ func parseConversionInfo(notes string) (float64, string) {
 	}
 
 	return 0, ""
+}
+
+// extractOriginalUnitFromItemName mengekstrak satuan asli dari nama item
+// Contoh: "susu uht 500ml" → "ml", "susu 1kg" → "kg", "teh 200gr" → "gr"
+func (a *Agent) extractOriginalUnitFromItemName(itemName string) string {
+	lowerName := strings.ToLower(itemName)
+	
+	// Pattern untuk mencari angka + unit di nama item
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|kg|kilogram|l|liter)`)
+	matches := re.FindStringSubmatch(lowerName)
+	
+	if len(matches) >= 3 {
+		unit := matches[2]
+		// Normalize unit
+		switch unit {
+		case "gr", "gram":
+			return "gr"
+		case "kg", "kilogram":
+			return "gr" // akan dikonversi ke gr
+		case "ml", "mililiter", "mililitre":
+			return "ml"
+		case "l", "liter":
+			return "ml" // akan dikonversi ke ml
+		}
+	}
+	
+	return ""
+}
+
+// extractQuantityFromItemName mengekstrak quantity dari nama item
+// Contoh: "susu uht 500ml" → 500, "susu 1liter" → 1
+func (a *Agent) extractQuantityFromItemName(itemName string) float64 {
+	lowerName := strings.ToLower(itemName)
+	
+	// Pattern untuk mencari angka + unit di nama item
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|kg|kilogram|l|liter)`)
+	matches := re.FindStringSubmatch(lowerName)
+	
+	if len(matches) >= 2 {
+		if qty, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			return qty
+		}
+	}
+	
+	return 0
+}
+
+// getConversionFactor menghitung conversion factor dari satuan asli ke satuan terkecil
+// Contoh: "500ml" → 500, "1kg" → 1000, "250gr" → 250
+func (a *Agent) getConversionFactor(originalUnit string) float64 {
+	lowerUnit := strings.ToLower(originalUnit)
+	
+	switch {
+	case strings.Contains(lowerUnit, "ml"):
+		// ml adalah satuan terkecil untuk liquid
+		if qty := a.extractQuantityFromUnit(originalUnit); qty > 0 {
+			return qty
+		}
+		return 1.0
+	case strings.Contains(lowerUnit, "gr"):
+		// gr adalah satuan terkecil untuk solid  
+		if qty := a.extractQuantityFromUnit(originalUnit); qty > 0 {
+			return qty
+		}
+		return 1.0
+	case strings.Contains(lowerUnit, "kg"):
+		return 1000.0 // kg ke gr
+	case strings.Contains(lowerUnit, "l"), strings.Contains(lowerUnit, "liter"):
+		return 1000.0 // liter ke ml
+	default:
+		return 1.0
+	}
+}
+
+// extractQuantityFromUnit mengekstrak quantity dari string unit
+// Contoh: "500ml" → 500, "1.5kg" → 1.5
+func (a *Agent) extractQuantityFromUnit(unitStr string) float64 {
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)`)
+	matches := re.FindStringSubmatch(unitStr)
+	
+	if len(matches) >= 2 {
+		if qty, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			return qty
+		}
+	}
+	
+	return 0
 }

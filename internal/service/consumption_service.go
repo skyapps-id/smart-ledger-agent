@@ -199,22 +199,12 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 		smallestUnit = determineSmallestUnit(originalUnit)
 	}
 
-	// Cek apakah sudah ada cycle aktif untuk item ini (tanpa batch)
-	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
-	if err == nil && cycle != nil {
-		// Sudah ada cycle aktif, update info penggunaan
-		cycle.ConsumedQty += finalConsumptionQty * finalConversionFactor
-		cycle.ConsumedUnit = smallestUnit
-		if err := s.cycleRepo.Update(ctx, cycle); err != nil {
-			return nil, fmt.Errorf("gagal update consumption cycle: %w", err)
-		}
-		s.log.InfoContext(ctx, "consumption cycle diupdate", "item", itemName, "batch", cycle.BatchNumber, "added_qty", finalConsumptionQty)
-		return cycle, nil
-	}
+	// SELALU buat cycle baru setiap kali pemakaian (setiap pakai = batch baru)
+	// Ini memungkinkan tracking per batch dengan start date yang berbeda
 
-	// Belum ada cycle aktif, buat baru dengan auto-generated batch
+	// Buat cycle baru dengan auto-generated batch
 	// Gunakan data inventory untuk PurchaseQty/PurchaseUnit agar tracking akurat
-	cycle = &domain.ConsumptionCycle{
+	cycle := &domain.ConsumptionCycle{
 		ChatID:           chatID,
 		ItemName:         itemName,
 		BatchNumber:      batchNumber,

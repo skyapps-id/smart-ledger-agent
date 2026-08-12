@@ -66,7 +66,7 @@ func (s *Sender) Start() {
 func (s *Sender) Enqueue(msg Message) bool {
 	select {
 	case s.messages <- msg:
-		s.log.Debug("pesan di-enqueue ke waha sender", "chat", msg.ChatID)
+		s.log.Info("pesan di-enqueue ke waha sender", "chat", msg.ChatID)
 		return true
 	default:
 		s.log.Warn("waha sender antrean penuh, pesan di-drop", "chat", msg.ChatID)
@@ -85,7 +85,7 @@ func (s *Sender) run() {
 		// Calculate human-like delay
 		delay := s.calculateDelay()
 		
-		s.log.Debug("waha sender delay", "delay", delay, "chat", msg.ChatID)
+		s.log.Info("waha sender processing message", "delay", delay, "chat", msg.ChatID)
 		
 		// Apply delay before sending
 		select {
@@ -102,7 +102,7 @@ func (s *Sender) run() {
 		if err != nil {
 			s.log.Error("gagal mengirim pesan ke waha", "err", err, "chat", msg.ChatID)
 		} else {
-			s.log.Debug("pesan terkirim ke waha", "chat", msg.ChatID)
+			s.log.Info("pesan terkirim ke waha", "chat", msg.ChatID)
 		}
 	}
 }

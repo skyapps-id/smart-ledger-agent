@@ -831,7 +831,11 @@ func (a *Agent) reply(ctx context.Context, chatID, text string) error {
 		return fmt.Errorf("gagal meng-enqueue balasan ke waha sender")
 	}
 	
-	a.log.DebugContext(ctx, "balasan di-enqueue", "chat", chatID)
+	preview := text
+	if len(text) > 50 {
+		preview = text[:50] + "..."
+	}
+	a.log.InfoContext(ctx, "balasan di-enqueue ke waha sender", "chat", chatID, "preview", preview)
 	return nil
 }
 

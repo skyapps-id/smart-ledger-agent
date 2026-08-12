@@ -215,16 +215,17 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 	}
 
 	// Belum ada cycle aktif, buat baru dengan auto-generated batch
+	// Gunakan data inventory untuk PurchaseQty/PurchaseUnit agar tracking akurat
 	cycle = &domain.ConsumptionCycle{
 		ChatID:           chatID,
 		ItemName:         itemName,
 		BatchNumber:      batchNumber,
 		StartDate:        time.Now(),
-		PurchaseQty:      finalUsageQty,
-		PurchaseUnit:     finalUsageUnit,
+		PurchaseQty:      usageQty,    // gunakan quantity dari inventory (pcs)
+		PurchaseUnit:     usageUnit,   // gunakan unit dari inventory (pcs)  
 		ConversionFactor: finalConversionFactor,
-		ConsumedQty:      finalUsageQty * finalConversionFactor, // set initial consumption
-		ConsumedUnit:     smallestUnit,
+		ConsumedQty:      finalUsageQty * finalConversionFactor, // tracking dalam unit asli (ml/gr)
+		ConsumedUnit:     smallestUnit, // tracking dalam unit asli (ml/gr)
 		Status:           domain.ConsumptionCycleActive,
 	}
 

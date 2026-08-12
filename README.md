@@ -27,12 +27,42 @@ flowchart LR
     U[User WhatsApp] <-->|message / reply| W[WAHA Engine<br/>NOWEB]
     W -->|POST /webhook| H[Go Webhook Handler<br/>Echo v4]
     H -->|instant 200 OK| W
-    H -->|enqueue| Q{{Worker Queue<br/>buffered channel}}
-    Q --> P[Worker Pool<br/>goroutines]
-    P -->|extract intent| LLM[OpenRouter<br/>DeepSeek]
-    P -->|read / write| DB[(PostgreSQL)]
-    P -->|POST /api/sendText| W
+    H -->|enqueue| Q{{LLM Worker Queue<br/>buffered channel}}
+    Q --> L[LLM Worker Pool<br/>concurrent 4 workers]
+    L -->|extract intent| R[OpenRouter<br/>DeepSeek]
+    L -->|read / write| DB[(PostgreSQL)]
+    L -->|enqueue reply| S{{WAHA Sender Queue<br/>sequential}}
+    S --> T[WAHA Sender Worker<br/>single worker]
+    T -->|2-5s delay| U2[Rate Limited Sender]
+    U2 -->|POST /api/sendText| W
 ```
+
+### Two-Tier Worker Architecture
+
+The system uses a two-tier worker architecture to optimize performance and prevent WhatsApp bans:
+
+```mermaid
+flowchart TD
+    A[Messages A,B,C,D,E] --> B[LLM Worker Queue]
+    B --> C[LLM Workers<br/>Concurrent Processing<br/>4 workers]
+    C --> D[Agent Processing]
+    D --> E[WAHA Sender Queue]
+    E --> F[WAHA Sender Worker<br/>Sequential Processing<br/>1 worker]
+    F --> G[Rate Limited Sender<br/>2-5s random delay]
+    G --> H[WhatsApp API]
+```
+
+**Tier 1: LLM Workers (Concurrent)**
+- 4 parallel workers for fast LLM processing
+- Handles intent classification, parameter extraction
+- Processes database operations concurrently
+- Queues replies for WhatsApp sending
+
+**Tier 2: WAHA Sender (Sequential)**
+- Single worker processes messages one-by-one
+- Random 2-5 second delays between sends
+- Prevents WhatsApp anti-spam detection
+- Human-like message timing
 
 ### Lifecycle of a Message (LLM-Based Architecture)
 
@@ -304,9 +334,12 @@ go test -v ./internal/service -run TestFullStockQueryFlow    # Full flow test
 | `OPENROUTER_BASE_URL` | – | `https://openrouter.ai/api/v1` | – |
 | `OPENROUTER_API_KEY` | ✓ | – | OpenRouter API key |
 | `OPENROUTER_MODEL` | – | `deepseek/deepseek-chat` | LLM model |
-| `WORKER_CONCURRENCY` | – | `4` | number of worker goroutines |
-| `WORKER_QUEUE_SIZE` | – | `256` | buffered channel capacity |
-| `WORKER_MAX_RETRIES` | – | `3` | max retries for retryable errors |
+| `WORKER_CONCURRENCY` | – | `4` | LLM worker concurrency |
+| `WORKER_QUEUE_SIZE` | – | `256` | LLM worker queue size |
+| `WORKER_MAX_RETRIES` | – | `3` | max retries for LLM operations |
+| `WAHA_SENDER_QUEUE_SIZE` | – | `100` | WAHA sender queue size |
+| `WAHA_SENDER_MIN_DELAY_MS` | – | `2000` | Min delay between sends (ms) |
+| `WAHA_SENDER_MAX_DELAY_MS` | – | `5000` | Max delay between sends (ms) |
 
 ---
 

@@ -3,7 +3,6 @@ package sender
 
 import (
 	"context"
-	"fmt"
 
 	"smart-ledger-agent/internal/waha"
 )

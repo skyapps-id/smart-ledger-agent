@@ -491,8 +491,21 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		}
 
 		usageUnit, _ := params["usage_unit"].(string)
+		
+		// Extract satuan asli dari nama item untuk consumption tracking yang akurat
+		originalUnit := a.extractOriginalUnitFromItemName(itemName)
+		originalQty := a.extractQuantityFromItemName(itemName)
+		
+		// Jika ada satuan asli di nama item, gunakan itu untuk consumption tracking
+		if originalUnit != "" && originalQty > 0 {
+			// Untuk inventory: kurangi dalam pcs (usageQty dari LLM)
+			// Untuk consumption: simpan dalam satuan asli (originalQty dalam originalUnit)
+			err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, originalQty, originalUnit)
+			return err // handleUsageWithConsumption already sends reply
+		}
+		
+		// Fallback ke default behavior jika tidak ada satuan asli
 		conversionFactor, _ := params["conversion_factor"].(float64)
-
 		if usageUnit == "" {
 			usageUnit = "pcs"
 		}
@@ -501,7 +514,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		}
 
 		// Kurangi stok dan mulai consumption cycle dengan auto-generated batch
-		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, conversionFactor)
+		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, 0.0, "")
 		return err // handleUsageWithConsumption already sends reply
 
 	case "complete", "finish":
@@ -608,7 +621,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 }
 
 // handleUsageWithConsumption menangani "pakai" action: kurangi stok + mulai consumption cycle.
-func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, conversionFactor float64) error {
+func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, originalQty float64, originalUnit string) error {
 	// Cek inventory item dulu
 	inv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
 	if err != nil {
@@ -623,9 +636,26 @@ func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.Incom
 		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Stok %s tidak cukup! Sisa: %.1f %s", itemName, inv.StockQty, inv.Unit))
 	}
 
+	// Tentukan conversion factor dan unit untuk consumption tracking
+	var finalConsumptionQty float64
+	var finalConsumptionUnit string
+	var conversionFactor float64
+
+	if originalUnit != "" && originalQty > 0 {
+		// Ada satuan asli dari nama item, gunakan untuk consumption tracking
+		finalConsumptionQty = originalQty
+		finalConsumptionUnit = originalUnit
+		conversionFactor = 1.0 // sudah dalam satuan terkecil (ml/gr)
+	} else {
+		// Gunakan default dari LLM
+		finalConsumptionQty = usageQty
+		finalConsumptionUnit = usageUnit
+		conversionFactor = 1.0
+	}
+
 	// Jalankan dalam transaction: kurangi stok + mulai/updates consumption cycle
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Kurangi stok
+		// Kurangi stok dalam unit inventory (pcs)
 		if err := a.invRepo.WithTx(tx).DecreaseStock(ctx, inv.ID, usageQty); err != nil {
 			return err
 		}
@@ -641,8 +671,8 @@ func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.Incom
 			return err
 		}
 
-		// Mulai/update consumption cycle dengan auto-generated batch
-		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, itemName, usageQty, usageUnit, conversionFactor)
+		// Mulai/update consumption cycle dengan satuan asli untuk tracking akurat
+		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, itemName, finalConsumptionQty, finalConsumptionUnit, conversionFactor)
 		if err != nil {
 			return err
 		}

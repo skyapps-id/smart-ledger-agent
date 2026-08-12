@@ -12,6 +12,7 @@ A WhatsApp-based assistant for tracking personal expenses and inventory. Just ch
 - **Chat = Ledger.** Each chat (DM or group) is an independent ledger. Groups share one ledger among members; DMs are personal.
 - **Natural Language Processing.** Type `beli kopi 15rb`, `cek stock kecap`, atau `analisa konsumsi bulan ini` → LLM understands intent and extracts structured parameters automatically.
 - **Automatic Inventory Management.** Physical-goods expenses automatically increase inventory; stock consumption automatically decreases it with smart tracking.
+- **Consumption Cycle Tracking.** Track per-item usage from start to finish — auto-generated batch numbers, daily rate calculation in smallest units (grams/ml), full consumption history.
 - **Financial Tracking.** Income, expenses, opening balance — all automatically categorized with LLM-powered classification.
 - **Context-Aware.** LLM receives inventory snapshots to resolve ambiguous item names (`susu` → `susu uht`) and provide intelligent responses.
 - **Smart Date Handling.** Various date formats supported: "kemarin", "01/08/2026", "01/08", "11-08" — LLM extracts and parses automatically.
@@ -86,6 +87,7 @@ flowchart TD
     I -- get_stock --> M[handleGetStock<br/>Query Inventory]
     I -- get_report --> N[handleGetReport<br/>Generate Report]
     I -- record_transaction --> O[handleRecordTransaction<br/>LLM Extract + Persist]
+    I -- consumption --> R[handleConsumptionAction<br/>Use / Complete]
     I -- none --> P[SmallTalk Reply]
     J --> Q[WAHA Reply]
     K --> Q
@@ -182,6 +184,7 @@ erDiagram
     chats ||--o{ transactions : owns
     chats ||--o{ inventory : owns
     inventory ||--o{ stock_logs : logs
+    chats ||--o{ consumption_cycles : owns
 
     chats {
         bigint id PK
@@ -217,6 +220,23 @@ erDiagram
         numeric quantity
         text notes
         timestamptz created_at
+    }
+    consumption_cycles {
+        bigint id PK
+        varchar(64) chat_id FK
+        varchar(128) item_name
+        varchar(64) batch_number "auto-generated"
+        date start_date
+        date end_date "nullable"
+        numeric purchase_qty
+        varchar(32) purchase_unit
+        numeric conversion_factor "to gr/ml"
+        numeric consumed_qty
+        varchar(32) consumed_unit
+        varchar(16) status "active/completed"
+        text notes
+        timestamptz created_at
+        timestamptz updated_at
     }
 ```
 

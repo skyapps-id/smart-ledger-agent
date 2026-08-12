@@ -192,7 +192,7 @@ Action types yang tersedia:
 3. "info" - permintaan informasi sesi/chat (contoh: "info", "sesi", "session", "identitas", "debug")
 4. "get_stock" - query stok/inventory (contoh: "stok", "stock", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
 5. "get_report" - query laporan keuangan/pemakaian (contoh: "pengeluaran hari ini", "pemasukan bulan ini", "ringkasan kemarin", "analisa konsumsi")
-6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi susu", "analisa pemakaian popok", "berapa habis per hari")
+6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi", "konsumsi susu", "konsumsi susu uht", "pemakaian", "pemakaian barang", "analisa pemakaian popok", "berapa habis per hari", "barang aktif", "item aktif")
 7. "record_transaction" - pencatatan transaksi (income/expense/consumption)
 8. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
 
@@ -221,6 +221,19 @@ Untuk "get_report":
 - from_date (string, optional): format "YYYY-MM-DD" atau "DD/MM/YYYY" untuk custom period start
 - to_date (string, optional): format "YYYY-MM-DD" atau "DD/MM/YYYY" untuk custom period end
 
+Untuk "consumption":
+- item_name (string, optional): nama barang untuk melihat konsumsi
+- consumption_action (string, optional): salah satu dari "info", "list", "use", "complete", "calculate", "history" - default "info"
+- Untuk "info": tampilkan info konsumsi aktif untuk item spesifik
+- Untuk "list": tampilkan semua item yang sedang aktif dikonsumsi
+- Untuk "use": mulai/catat pemakaian barang (butuh usage_qty dan usage_unit)
+- Untuk "complete": selesaikan siklus konsumsi (barang habis)
+- Untuk "calculate": hitung konsumsi harian
+- Untuk "history": tampilkan history konsumsi item
+- usage_qty (number, optional): jumlah pemakaian untuk action "use"
+- usage_unit (string, optional): satuan pemakaian untuk action "use"
+- batch_number (string, optional): nomor batch untuk action "complete"
+
 Untuk "record_transaction":
 - TIDAK perlu ekstrak parameter di sini, cukup set action dan data: null
 - Data transaksi akan diekstrak oleh LLM extractor terpisah
@@ -235,5 +248,9 @@ Contoh output:
 {"action":"get_report","params":{"report_type":"summary","period":"today"}}
 {"action":"get_report","params":{"report_type":"expense","period":"this_month"}}
 {"action":"consumption","params":{"item_name":"susu"}}
+{"action":"consumption","params":{"consumption_action":"list"}}
+{"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht"}}
+{"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"botol"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

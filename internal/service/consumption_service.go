@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -15,9 +16,9 @@ import (
 
 // ConsumptionService menangani pembuatan dan analisa consumption cycles.
 type ConsumptionService struct {
-	db          *gorm.DB
-	cycleRepo   repository.ConsumptionCycleRepository
-	log         *slog.Logger
+	db        *gorm.DB
+	cycleRepo repository.ConsumptionCycleRepository
+	log       *slog.Logger
 }
 
 func NewConsumptionService(db *gorm.DB, cycleRepo repository.ConsumptionCycleRepository, logger *slog.Logger) *ConsumptionService {
@@ -38,6 +39,9 @@ func (s *ConsumptionService) StartCycle(ctx context.Context, chatID, itemName st
 
 // StartCycleWithDate memulai siklus konsumsi baru dengan tanggal pembelian spesifik.
 func (s *ConsumptionService) StartCycleWithDate(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64, purchaseDate time.Time) (*domain.ConsumptionCycle, error) {
+	// Determine smallest unit based on purchase unit
+	smallestUnit := determineSmallestUnit(purchaseUnit)
+
 	cycle := &domain.ConsumptionCycle{
 		ChatID:           chatID,
 		ItemName:         itemName,
@@ -46,7 +50,7 @@ func (s *ConsumptionService) StartCycleWithDate(ctx context.Context, chatID, ite
 		PurchaseUnit:     purchaseUnit,
 		ConversionFactor: conversionFactor,
 		ConsumedQty:      0,
-		ConsumedUnit:     "gr", // selalu pakai satuan terkecil
+		ConsumedUnit:     smallestUnit, // gunakan satuan terkecil yang sesuai
 		Status:           domain.ConsumptionCycleActive,
 	}
 
@@ -67,18 +71,78 @@ func generateBatchNumber() string {
 	return fmt.Sprintf("%s-%02d-%02d%02d%02d", month, now.Day(), now.Hour(), now.Minute(), now.Second())
 }
 
+// determineSmallestUnit menentukan satuan terkecil berdasarkan satuan pembelian dan item name
+func determineSmallestUnit(purchaseUnit string) string {
+	lowerUnit := strings.ToLower(purchaseUnit)
+
+	// Liquid units -> ml (be more specific to avoid false matches)
+	if strings.Contains(lowerUnit, "ml") || strings.Contains(lowerUnit, "mililiter") || strings.Contains(lowerUnit, "mililitre") {
+		return "ml"
+	}
+	if strings.Contains(lowerUnit, "liter") {
+		return "ml"
+	}
+	// Only match standalone "l" as a unit, not "l" inside words like "kaleng"
+	if lowerUnit == "l" || strings.HasSuffix(lowerUnit, " l") || strings.HasPrefix(lowerUnit, "l ") {
+		return "ml"
+	}
+
+	// Solid units -> gr
+	if strings.Contains(lowerUnit, "gr") || strings.Contains(lowerUnit, "gram") {
+		return "gr"
+	}
+	if strings.Contains(lowerUnit, "kg") || strings.Contains(lowerUnit, "kilogram") {
+		return "gr"
+	}
+
+	// Default to gr for unknown units
+	return "gr"
+}
+
+// determineSmallestUnitFromName menentukan satuan terkecil berdasarkan nama barang
+func determineSmallestUnitFromName(itemName string) string {
+	lowerName := strings.ToLower(itemName)
+
+	// Solid indicators in item name - weight units
+	if strings.Contains(lowerName, "gr") || strings.Contains(lowerName, "gram") {
+		return "gr"
+	}
+	if strings.Contains(lowerName, "kg") || strings.Contains(lowerName, "kilogram") {
+		return "gr"
+	}
+
+	// Liquid indicators in item name - volume units
+	if strings.Contains(lowerName, "ml") || strings.Contains(lowerName, "mililiter") || strings.Contains(lowerName, "mililitre") {
+		return "ml"
+	}
+	if strings.Contains(lowerName, "liter") || (strings.Contains(lowerName, "l") && !strings.Contains(lowerName, " kaleng")) {
+		return "ml"
+	}
+
+	// Specific liquid types with volume indicators
+	if strings.Contains(lowerName, "uht") && (strings.Contains(lowerName, "ml") || strings.Contains(lowerName, "liter")) {
+		return "ml"
+	}
+
+	// Default to gr for unknown or solid items
+	return "gr"
+}
+
 // StartUsage memulai pemakaian item (saat user bilang "pakai susu 400gr").
 // Ini akan membuat consumption cycle baru dengan auto-generated batch number.
 func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName string, usageQty float64, usageUnit string, conversionFactor float64) (*domain.ConsumptionCycle, error) {
 	// Auto-generate batch number
 	batchNumber := generateBatchNumber()
 
+	// Determine smallest unit based on usage unit
+	smallestUnit := determineSmallestUnit(usageUnit)
+
 	// Cek apakah sudah ada cycle aktif untuk item ini (tanpa batch)
 	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
 	if err == nil && cycle != nil {
 		// Sudah ada cycle aktif, update info penggunaan
 		cycle.ConsumedQty += usageQty * conversionFactor
-		cycle.ConsumedUnit = "gr"
+		cycle.ConsumedUnit = smallestUnit
 		if err := s.cycleRepo.Update(ctx, cycle); err != nil {
 			return nil, fmt.Errorf("gagal update consumption cycle: %w", err)
 		}
@@ -96,7 +160,7 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 		PurchaseUnit:     usageUnit,
 		ConversionFactor: conversionFactor,
 		ConsumedQty:      usageQty * conversionFactor, // set initial consumption
-		ConsumedUnit:     "gr",
+		ConsumedUnit:     smallestUnit,
 		Status:           domain.ConsumptionCycleActive,
 	}
 
@@ -178,11 +242,18 @@ func (s *ConsumptionService) CompleteUsage(ctx context.Context, chatID, itemName
 	// Hitung dalam satuan terkecil (gram/ml)
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
 
+	// Determine the correct display unit based on both purchase unit and item name
+	displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
+	if displayUnit == "gr" {
+		// Check if item name suggests liquid
+		displayUnit = determineSmallestUnitFromName(itemName)
+	}
+
 	// Update cycle ke completed
 	cycle.Status = domain.ConsumptionCycleCompleted
 	cycle.EndDate = &endTime
 	cycle.ConsumedQty = totalPurchasedInSmallestUnit / cycle.ConversionFactor // Set ke full amount
-	cycle.ConsumedUnit = "gr"
+	cycle.ConsumedUnit = displayUnit
 
 	if err := s.cycleRepo.Update(ctx, cycle); err != nil {
 		return "", fmt.Errorf("gagal menyelesaikan cycle: %w", err)
@@ -202,14 +273,14 @@ func (s *ConsumptionService) CompleteUsage(ctx context.Context, chatID, itemName
 	return fmt.Sprintf(
 		"✅ %s sudah habis!\n"+
 			"⏰ Durasi: %.0f hari\n"+
-			"📊 Total: %.0f gr (%.1f %s)\n"+
-			"📈 Rate: %.1f gr/hari\n"+
+			"📊 Total: %.0f %s (%.1f %s)\n"+
+			"📈 Rate: %.1f %s/hari\n"+
 			"📅 Mulai: %s\n"+
 			"📅 Selesai: %s",
 		itemLabel,
 		daysInUse,
-		totalPurchasedInSmallestUnit, cycle.PurchaseQty, cycle.PurchaseUnit,
-		dailyRate,
+		totalPurchasedInSmallestUnit, displayUnit, cycle.PurchaseQty, cycle.PurchaseUnit,
+		dailyRate, displayUnit,
 		cycle.StartDate.Format("02/01/2006"),
 		endTime.Format("02/01/2006"),
 	), nil
@@ -260,22 +331,29 @@ func (s *ConsumptionService) GetActiveCycleInfo(ctx context.Context, chatID, ite
 		itemLabel = fmt.Sprintf("%s (%s)", itemName, cycle.BatchNumber)
 	}
 
+	// Determine the correct display unit based on both purchase unit and item name
+	displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
+	if displayUnit == "gr" {
+		// Check if item name suggests liquid
+		displayUnit = determineSmallestUnitFromName(itemName)
+	}
+
 	return fmt.Sprintf(
 		"📊 %s: %s\n"+
-			"📦 Beli: %g %s (%.0f gr) pada %s\n"+
+			"📦 Beli: %g %s (%.0f %s) pada %s\n"+
 			"⏰ Durasi: %.0f hari\n"+
-			"📉 Terpakai: %.0f gr\n"+
-			"📊 Sisa: %.0f gr (%.1f %s)\n"+
-			"📈 Rate: %.1f gr/hari\n"+
+			"📉 Terpakai: %.0f %s\n"+
+			"📊 Sisa: %.0f %s (%.1f %s)\n"+
+			"📈 Rate: %.1f %s/hari\n"+
 			"🔮 Estimasi: %d hari lagi\n"+
 			"Status: %s",
 		itemLabel,
 		status,
-		cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit, cycle.StartDate.Format("02/01/2006"),
+		cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit, displayUnit, cycle.StartDate.Format("02/01/2006"),
 		daysInUse,
-		totalConsumedInSmallestUnit,
-		remainingInSmallestUnit, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
-		dailyRateInSmallestUnit,
+		totalConsumedInSmallestUnit, displayUnit,
+		remainingInSmallestUnit, displayUnit, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
+		dailyRateInSmallestUnit, displayUnit,
 		estimationDays,
 		cycle.Status,
 	), nil
@@ -306,6 +384,7 @@ func (s *ConsumptionService) ListActiveItems(ctx context.Context, chatID string)
 	for i, cycle := range activeCycles {
 		daysInUse := time.Since(cycle.StartDate).Hours() / 24
 		totalInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
+		displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
 
 		itemLabel := cycle.ItemName
 		if cycle.BatchNumber != "" {
@@ -313,9 +392,9 @@ func (s *ConsumptionService) ListActiveItems(ctx context.Context, chatID string)
 		}
 
 		result += fmt.Sprintf(
-			"%d. %s\n   📦 %g %s (%.0f gr)\n   📅 Mulai: %s (%.0f hari lalu)\n\n",
+			"%d. %s\n   📦 %g %s (%.0f %s)\n   📅 Mulai: %s (%.0f hari lalu)\n\n",
 			i+1, itemLabel,
-			cycle.PurchaseQty, cycle.PurchaseUnit, totalInSmallestUnit,
+			cycle.PurchaseQty, cycle.PurchaseUnit, totalInSmallestUnit, displayUnit,
 			cycle.StartDate.Format("02/01/2006"), daysInUse,
 		)
 	}
@@ -358,6 +437,7 @@ func (s *ConsumptionService) GetHistory(ctx context.Context, chatID, itemName st
 
 		totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
 		totalConsumedInSmallestUnit := cycle.ConsumedQty * cycle.ConversionFactor
+		displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
 
 		dailyConsumptionInSmallestUnit := 0.0
 		if daysInUse > 0 && totalConsumedInSmallestUnit > 0 {
@@ -369,13 +449,13 @@ func (s *ConsumptionService) GetHistory(ctx context.Context, chatID, itemName st
 			i+1, cycle.StartDate.Format("02/01/2006"), status,
 		)
 		result += fmt.Sprintf(
-			"   Beli: %g %s (%.0f gr), Terpakai: %g %s (%.0f gr)\n",
-			cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit,
-			cycle.ConsumedQty, cycle.ConsumedUnit, totalConsumedInSmallestUnit,
+			"   Beli: %g %s (%.0f %s), Terpakai: %g %s (%.0f %s)\n",
+			cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit, displayUnit,
+			cycle.ConsumedQty, cycle.ConsumedUnit, totalConsumedInSmallestUnit, displayUnit,
 		)
 		result += fmt.Sprintf(
-			"   Durasi: %.0f hari, Rate: %.1f gr/hari\n\n",
-			daysInUse, dailyConsumptionInSmallestUnit,
+			"   Durasi: %.0f hari, Rate: %.1f %s/hari\n\n",
+			daysInUse, dailyConsumptionInSmallestUnit, displayUnit,
 		)
 	}
 
@@ -401,8 +481,15 @@ func (s *ConsumptionService) CompleteCycleWithEndDate(ctx context.Context, chatI
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
 	dailyConsumption := totalPurchasedInSmallestUnit / daysInUse
 
+	// Determine the correct display unit based on both purchase unit and item name
+	displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
+	if displayUnit == "gr" {
+		// Check if item name suggests liquid
+		displayUnit = determineSmallestUnitFromName(itemName)
+	}
+
 	cycle.ConsumedQty = totalPurchasedInSmallestUnit / cycle.ConversionFactor
-	cycle.ConsumedUnit = "gr"
+	cycle.ConsumedUnit = displayUnit
 	cycle.Status = domain.ConsumptionCycleCompleted
 	cycle.EndDate = &endDate
 
@@ -427,22 +514,23 @@ func (s *ConsumptionService) CalculateDailyConsumption(ctx context.Context, chat
 
 	totalPurchasedInSmallestUnit := purchaseQty * conversionFactor
 	dailyConsumption := totalPurchasedInSmallestUnit / daysInUse
+	displayUnit := determineSmallestUnit(purchaseUnit)
 
 	result := fmt.Sprintf(
 		"📊 Hasil Perhitungan Konsumsi: %s\n"+
-			"📦 Pembelian: %g %s (%.0f gr)\n"+
+			"📦 Pembelian: %g %s (%.0f %s)\n"+
 			"📅 Tanggal Beli: %s\n"+
 			"📅 Tanggal Habis: %s\n"+
 			"⏰ Durasi: %.0f hari\n"+
-			"📈 Konsumsi Per Hari: %.1f gr/hari\n"+
-			"📉 Total Konsumsi: %.0f gr",
+			"📈 Konsumsi Per Hari: %.1f %s/hari\n"+
+			"📉 Total Konsumsi: %.0f %s",
 		itemName,
-		purchaseQty, purchaseUnit, totalPurchasedInSmallestUnit,
+		purchaseQty, purchaseUnit, totalPurchasedInSmallestUnit, displayUnit,
 		purchaseDate.Format("02/01/2006"),
 		endDate.Format("02/01/2006"),
 		daysInUse,
-		dailyConsumption,
-		totalPurchasedInSmallestUnit,
+		dailyConsumption, displayUnit,
+		totalPurchasedInSmallestUnit, displayUnit,
 	)
 
 	return result, nil

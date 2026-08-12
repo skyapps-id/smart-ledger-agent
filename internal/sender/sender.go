@@ -77,28 +77,28 @@ func (s *Sender) Enqueue(msg Message) bool {
 // run adalah loop utama worker sender (sequential processing).
 func (s *Sender) run() {
 	defer s.wg.Done()
-	
+
 	// Initial random delay
 	time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
-	
+
 	for msg := range s.messages {
 		// Calculate human-like delay
 		delay := s.calculateDelay()
-		
+
 		s.log.Info("waha sender processing message", "delay", delay, "chat", msg.ChatID)
-		
+
 		// Apply delay before sending
 		select {
 		case <-time.After(delay):
 		case <-s.quit:
 			return
 		}
-		
+
 		// Kirim pesan dengan timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		err := s.processor.SendMessage(ctx, msg)
 		cancel()
-		
+
 		if err != nil {
 			s.log.Error("gagal mengirim pesan ke waha", "err", err, "chat", msg.ChatID)
 		} else {
@@ -112,7 +112,7 @@ func (s *Sender) calculateDelay() time.Duration {
 	if s.minDelay >= s.maxDelay {
 		return s.minDelay
 	}
-	
+
 	// Random delay between min and max
 	// Both minDelay and maxDelay are already in correct time.Duration format
 	delayRange := s.maxDelay - s.minDelay

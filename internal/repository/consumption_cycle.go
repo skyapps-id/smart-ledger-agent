@@ -81,11 +81,11 @@ func (r *consumptionCycleRepo) ListByChat(ctx context.Context, chatID string, li
 	query := r.db.WithContext(ctx).
 		Where("chat_id = ?", chatID).
 		Order("start_date DESC")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	
+
 	err := query.Find(&cycles).Error
 	return cycles, err
 }
@@ -95,19 +95,19 @@ func (r *consumptionCycleRepo) ListByDateRange(ctx context.Context, chatID, item
 	query := r.db.WithContext(ctx).
 		Where("chat_id = ?", chatID).
 		Order("start_date DESC")
-	
+
 	if itemName != "" {
 		query = query.Where("item_name = ?", itemName)
 	}
-	
+
 	if !from.IsZero() {
 		query = query.Where("start_date >= ?", from)
 	}
-	
+
 	if !to.IsZero() {
 		query = query.Where("start_date <= ?", to)
 	}
-	
+
 	err := query.Find(&cycles).Error
 	return cycles, err
 }
@@ -117,7 +117,7 @@ func (r *consumptionCycleRepo) CompleteCycle(ctx context.Context, id int64, endD
 		Model(&domain.ConsumptionCycle{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"status":    domain.ConsumptionCycleCompleted,
-			"end_date":  endDate,
+			"status":   domain.ConsumptionCycleCompleted,
+			"end_date": endDate,
 		}).Error
 }

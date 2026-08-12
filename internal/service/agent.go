@@ -29,17 +29,17 @@ type MessageSender interface {
 
 // Agent adalah orchestrator utama (RFC §4.1 langkah 4-6).
 type Agent struct {
-	db                *gorm.DB
-	chatRepo          repository.ChatRepository
-	txnRepo           repository.TransactionRepository
-	invRepo           repository.InventoryRepository
+	db                 *gorm.DB
+	chatRepo           repository.ChatRepository
+	txnRepo            repository.TransactionRepository
+	invRepo            repository.InventoryRepository
 	logRepo            repository.StockLogRepository
 	consumptionService *ConsumptionService
-	llm               llm.Extractor
-	intent            llm.IntentExtractor
-	sender            MessageSender
-	invCache          *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
-	log               *slog.Logger
+	llm                llm.Extractor
+	intent             llm.IntentExtractor
+	sender             MessageSender
+	invCache           *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
+	log                *slog.Logger
 }
 
 // NewAgent membuat agent baru dengan dependency injection.
@@ -58,21 +58,21 @@ func NewAgent(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	
+
 	consumptionService := NewConsumptionService(db, consumptionCycleRepo, logger)
-	
+
 	return &Agent{
-		db:                db,
-		chatRepo:          chatRepo,
-		txnRepo:           txnRepo,
-		invRepo:           invRepo,
+		db:                 db,
+		chatRepo:           chatRepo,
+		txnRepo:            txnRepo,
+		invRepo:            invRepo,
 		logRepo:            logRepo,
 		consumptionService: consumptionService,
-		llm:               extractor,
-		intent:            intentExtractor,
-		sender:            sender,
-		invCache:          cache.New(5*time.Minute, 10*time.Minute),
-		log:               logger,
+		llm:                extractor,
+		intent:             intentExtractor,
+		sender:             sender,
+		invCache:           cache.New(5*time.Minute, 10*time.Minute),
+		log:                logger,
 	}
 }
 
@@ -437,7 +437,12 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 	// Ambil parameter yang diperlukan
 	itemName, ok := params["item_name"].(string)
 	if !ok || itemName == "" {
-		return a.reply(ctx, msg.ChatID, "Maaf, perlu specify nama barang.")
+		// Jika tidak ada item_name specific, list semua active items
+		result, err := a.consumptionService.ListActiveItems(ctx, msg.ChatID)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+		}
+		return a.reply(ctx, msg.ChatID, result)
 	}
 
 	actionType, ok := params["consumption_action"].(string)
@@ -543,6 +548,16 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 
 		return a.reply(ctx, msg.ChatID, result)
 
+	case "info":
+		// Tampilkan info konsumsi aktif untuk item spesifik
+		batchNumber, _ := params["batch_number"].(string)
+		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, itemName, batchNumber)
+		if err != nil {
+			// Jika item tidak ditemukan, tarkan pesan yang lebih informatif
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Tidak ada consumption cycle aktif untuk '%s'. Ketik 'barang aktif' untuk melihat semua item yang sedang dikonsumsi.", itemName))
+		}
+		return a.reply(ctx, msg.ChatID, result)
+
 	case "list":
 		// List semua active items dengan batch numbers
 		result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
@@ -553,10 +568,16 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		return a.reply(ctx, msg.ChatID, result)
 
 	default:
-		// Default: list active items untuk user bisa pilih
-		result, err := a.consumptionService.ListActiveItems(ctx, msg.ChatID)
+		// Default: coba info dulu, jika tidak ada maka list active items
+		batchNumber, _ := params["batch_number"].(string)
+		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, itemName, batchNumber)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+			// Jika tidak ada spesifik item, list semua active items
+			result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
+			if err != nil {
+				return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+			}
+			return a.reply(ctx, msg.ChatID, result)
 		}
 		return a.reply(ctx, msg.ChatID, result)
 	}
@@ -1045,12 +1066,12 @@ func (a *Agent) reply(ctx context.Context, chatID, text string) error {
 		ChatID: chatID,
 		Text:   text,
 	}
-	
+
 	if !a.sender.Enqueue(msg) {
 		a.log.ErrorContext(ctx, "gagal meng-enqueue balasan", "chat", chatID)
 		return fmt.Errorf("gagal meng-enqueue balasan ke waha sender")
 	}
-	
+
 	preview := text
 	if len(text) > 50 {
 		preview = text[:50] + "..."

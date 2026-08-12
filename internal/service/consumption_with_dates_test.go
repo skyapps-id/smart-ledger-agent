@@ -73,7 +73,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		result, err := service.CalculateDailyConsumption(ctx, chatID, "Susu UHT", purchaseDate, endDate, 6.0, "kaleng", 1000.0)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Susu UHT")
-		assert.Contains(t, result, "6000 gr") // 6 x 1000
+		assert.Contains(t, result, "6000 gr")       // 6 x 1000
 		assert.Contains(t, result, "206.9 gr/hari") // 6000 / 29 hari = 206.9
 	})
 
@@ -137,13 +137,13 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 
 	t.Run("Calculate daily consumption untuk berbagai scenario", func(t *testing.T) {
 		testCases := []struct {
-			name           string
-			purchaseQty    float64
-			purchaseUnit   string
-			convFactor     float64
-			startDate      string
-			endDate        string
-			expectedDaily  float64
+			name          string
+			purchaseQty   float64
+			purchaseUnit  string
+			convFactor    float64
+			startDate     string
+			endDate       string
+			expectedDaily float64
 		}{
 			{
 				name:          "Susu 2 kaleng (800gr) selama 30 hari",

@@ -115,7 +115,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			updatedInv, err := invRepo.GetByChatItem(ctx, chatID, "Susu 400gr")
 			require.NoError(t, err)
 			assert.Equal(t, 4.0, updatedInv.StockQty) // 5 - 1 = 4
-			_ = updatedInv // suppress unused warning
+			_ = updatedInv                            // suppress unused warning
 		})
 
 		// STEP 3: HABIS (consumption cycle COMPLETED + laporan)
@@ -154,11 +154,11 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 	t.Run("Flow dengan multiple items", func(t *testing.T) {
 		// Setup multiple items
 		items := []struct {
-			name     string
-			qty      float64
-			unit     string
-			conv     float64
-			price    float64
+			name  string
+			qty   float64
+			unit  string
+			conv  float64
+			price float64
 		}{
 			{"Kopi 1kg", 1, "kg", 1000.0, 150000},
 			{"Teh 250gr", 1, "bungkus", 250.0, 35000},

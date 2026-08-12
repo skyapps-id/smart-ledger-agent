@@ -37,5 +37,6 @@ func autoMigrate(db *gorm.DB) error {
 		&domain.Transaction{},
 		&domain.Inventory{},
 		&domain.StockLog{},
+		&domain.ConsumptionCycle{},
 	)
 }

@@ -135,6 +135,7 @@ const (
 	ActionRecordTransaction = "record_transaction"
 	ActionGetStock          = "get_stock"
 	ActionGetReport         = "get_report"
+	ActionConsumption       = "consumption"
 	ActionInit              = "init"
 	ActionHelp              = "help"
 	ActionInfo              = "info"

@@ -29,16 +29,17 @@ type MessageSender interface {
 
 // Agent adalah orchestrator utama (RFC §4.1 langkah 4-6).
 type Agent struct {
-	db       *gorm.DB
-	chatRepo repository.ChatRepository
-	txnRepo  repository.TransactionRepository
-	invRepo  repository.InventoryRepository
-	logRepo  repository.StockLogRepository
-	llm      llm.Extractor
-	intent   llm.IntentExtractor
-	sender   MessageSender
-	invCache *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
-	log      *slog.Logger
+	db                *gorm.DB
+	chatRepo          repository.ChatRepository
+	txnRepo           repository.TransactionRepository
+	invRepo           repository.InventoryRepository
+	logRepo            repository.StockLogRepository
+	consumptionService *ConsumptionService
+	llm               llm.Extractor
+	intent            llm.IntentExtractor
+	sender            MessageSender
+	invCache          *cache.Cache // inventory snapshot cache (TTL 5m, invalidated on write)
+	log               *slog.Logger
 }
 
 // NewAgent membuat agent baru dengan dependency injection.
@@ -48,6 +49,7 @@ func NewAgent(
 	txnRepo repository.TransactionRepository,
 	invRepo repository.InventoryRepository,
 	logRepo repository.StockLogRepository,
+	consumptionCycleRepo repository.ConsumptionCycleRepository,
 	extractor llm.Extractor,
 	intentExtractor llm.IntentExtractor,
 	sender MessageSender,
@@ -56,17 +58,21 @@ func NewAgent(
 	if logger == nil {
 		logger = slog.Default()
 	}
+	
+	consumptionService := NewConsumptionService(db, consumptionCycleRepo, logger)
+	
 	return &Agent{
-		db:       db,
-		chatRepo: chatRepo,
-		txnRepo:  txnRepo,
-		invRepo:  invRepo,
-		logRepo:  logRepo,
-		llm:      extractor,
-		intent:   intentExtractor,
-		sender:   sender,
-		invCache: cache.New(5*time.Minute, 10*time.Minute),
-		log:      logger,
+		db:                db,
+		chatRepo:          chatRepo,
+		txnRepo:           txnRepo,
+		invRepo:           invRepo,
+		logRepo:            logRepo,
+		consumptionService: consumptionService,
+		llm:               extractor,
+		intent:            intentExtractor,
+		sender:            sender,
+		invCache:          cache.New(5*time.Minute, 10*time.Minute),
+		log:               logger,
 	}
 }
 
@@ -104,6 +110,9 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 
 	case domain.ActionGetReport:
 		return a.handleGetReport(ctx, msg, chat, action.Params)
+
+	case domain.ActionConsumption:
+		return a.handleConsumptionAction(ctx, msg, action.Params)
 
 	case domain.ActionRecordTransaction:
 		return a.handleRecordTransaction(ctx, msg, chat)
@@ -350,7 +359,7 @@ func (a *Agent) handleExpense(ctx context.Context, msg entity.IncomingMessage, e
 	return baseReply, nil
 }
 
-// handleConsumption: kurangi stok + log OUT (RFC §7.2). Tanpa record uang.
+// handleConsumption: kurangi stok + log OUT + update consumption cycle (RFC §7.2).
 func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
 	// Cek keberadaan barang di inventaris chat.
 	inv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, ext.ItemName)
@@ -374,16 +383,26 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 	}
 
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Kurangi stok
 		if err := a.invRepo.WithTx(tx).DecreaseStock(ctx, inv.ID, ext.Quantity); err != nil {
 			return err
 		}
+
+		// Log stock OUT
 		log := &domain.StockLog{
 			InventoryID: inv.ID,
 			ChangeType:  domain.StockOut,
 			Quantity:    ext.Quantity,
 			Notes:       ext.Notes,
 		}
-		return a.logRepo.WithTx(tx).Create(ctx, log)
+		if err := a.logRepo.WithTx(tx).Create(ctx, log); err != nil {
+			return err
+		}
+
+		// Start/update consumption cycle dengan conversion factor default
+		conversionFactor := 1.0 // default, bisa diupdate nanti
+		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, ext.ItemName, ext.Quantity, ext.Unit, conversionFactor)
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrInsufficientStock) {
@@ -402,15 +421,224 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 		// Fallback to calculation if fetch fails
 		remaining := inv.StockQty - ext.Quantity
 		return fmt.Sprintf(
-			"Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.",
+			"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
 			ext.ItemName, ext.Quantity, ext.Unit, remaining, inv.Unit,
 		), nil
 	}
 
 	return fmt.Sprintf(
-		"Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.",
+		"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
 		ext.ItemName, ext.Quantity, ext.Unit, updatedInv.StockQty, updatedInv.Unit,
 	), nil
+}
+
+// handleConsumptionAction menangani action konsumsi dari LLM.
+func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.IncomingMessage, params map[string]interface{}) error {
+	// Ambil parameter yang diperlukan
+	itemName, ok := params["item_name"].(string)
+	if !ok || itemName == "" {
+		return a.reply(ctx, msg.ChatID, "Maaf, perlu specify nama barang.")
+	}
+
+	actionType, ok := params["consumption_action"].(string)
+	if !ok {
+		actionType = "info" // default action
+	}
+
+	var result string
+	var err error
+
+	switch actionType {
+	case "use", "start":
+		// "pakai" - mulai consumption cycle
+		usageQty, ok := params["usage_qty"].(float64)
+		if !ok {
+			// Coba alternate parameter names
+			if qty, ok2 := params["quantity"].(float64); ok2 {
+				usageQty = qty
+			} else {
+				return a.reply(ctx, msg.ChatID, "Maaf, perlu specify jumlah pemakaian (quantity).")
+			}
+		}
+
+		usageUnit, _ := params["usage_unit"].(string)
+		conversionFactor, _ := params["conversion_factor"].(float64)
+
+		if usageUnit == "" {
+			usageUnit = "pcs"
+		}
+		if conversionFactor == 0 {
+			conversionFactor = 1.0
+		}
+
+		// Kurangi stok dan mulai consumption cycle dengan auto-generated batch
+		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, conversionFactor)
+		return err // handleUsageWithConsumption already sends reply
+
+	case "complete", "finish":
+		// "habis" - selesaikan consumption cycle
+		batchNumber, _ := params["batch_number"].(string)
+		result, err = a.consumptionService.CompleteUsage(ctx, msg.ChatID, itemName, batchNumber)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal menyelesaikan consumption: %v", err))
+		}
+
+		return a.reply(ctx, msg.ChatID, result)
+
+	case "calculate":
+		// Menghitung konsumsi harian tanpa menyimpan cycle
+		purchaseQty, ok := params["purchase_qty"].(float64)
+		if !ok {
+			return a.reply(ctx, msg.ChatID, "Maaf, perlu specify jumlah pembelian (purchase_qty).")
+		}
+
+		purchaseUnit, _ := params["purchase_unit"].(string)
+		conversionFactor, _ := params["conversion_factor"].(float64)
+
+		if purchaseUnit == "" {
+			purchaseUnit = "pcs"
+		}
+		if conversionFactor == 0 {
+			conversionFactor = 1.0
+		}
+
+		purchaseDateStr, ok := params["purchase_date"].(string)
+		if !ok || purchaseDateStr == "" {
+			return a.reply(ctx, msg.ChatID, "Maaf, perlu specify tanggal pembelian (purchase_date).")
+		}
+
+		endDateStr, ok := params["end_date"].(string)
+		if !ok || endDateStr == "" {
+			return a.reply(ctx, msg.ChatID, "Maaf, perlu specify tanggal habis (end_date).")
+		}
+
+		purchaseDate, err := time.Parse("2006-01-02", purchaseDateStr)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, "Format tanggal purchase_date tidak valid (YYYY-MM-DD).")
+		}
+
+		endDate, err := time.Parse("2006-01-02", endDateStr)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, "Format tanggal end_date tidak valid (YYYY-MM-DD).")
+		}
+
+		result, err = a.consumptionService.CalculateDailyConsumption(ctx, msg.ChatID, itemName, purchaseDate, endDate, purchaseQty, purchaseUnit, conversionFactor)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal menghitung konsumsi: %v", err))
+		}
+
+		return a.reply(ctx, msg.ChatID, result)
+
+	case "history":
+		// Mendapatkan history konsumsi
+		limit := 10
+		if limitParam, ok := params["limit"].(float64); ok {
+			limit = int(limitParam)
+		}
+
+		result, err = a.consumptionService.GetHistory(ctx, msg.ChatID, itemName, limit)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil history: %v", err))
+		}
+
+		return a.reply(ctx, msg.ChatID, result)
+
+	case "list":
+		// List semua active items dengan batch numbers
+		result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+		}
+
+		return a.reply(ctx, msg.ChatID, result)
+
+	default:
+		// Default: list active items untuk user bisa pilih
+		result, err := a.consumptionService.ListActiveItems(ctx, msg.ChatID)
+		if err != nil {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+		}
+		return a.reply(ctx, msg.ChatID, result)
+	}
+}
+
+// handleUsageWithConsumption menangani "pakai" action: kurangi stok + mulai consumption cycle.
+func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, conversionFactor float64) error {
+	// Cek inventory item dulu
+	inv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Barang '%s' belum ada di inventaris. Beli dulu ya!", itemName))
+		}
+		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal cek inventaris: %v", err))
+	}
+
+	// Validasi stok cukup
+	if inv.StockQty < usageQty {
+		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Stok %s tidak cukup! Sisa: %.1f %s", itemName, inv.StockQty, inv.Unit))
+	}
+
+	// Jalankan dalam transaction: kurangi stok + mulai/updates consumption cycle
+	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Kurangi stok
+		if err := a.invRepo.WithTx(tx).DecreaseStock(ctx, inv.ID, usageQty); err != nil {
+			return err
+		}
+
+		// Log stock movement
+		log := &domain.StockLog{
+			InventoryID: inv.ID,
+			ChangeType:  domain.StockOut,
+			Quantity:    usageQty,
+			Notes:       "Mulai pemakaian - consumption cycle",
+		}
+		if err := a.logRepo.WithTx(tx).Create(ctx, log); err != nil {
+			return err
+		}
+
+		// Mulai/update consumption cycle dengan auto-generated batch
+		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, itemName, usageQty, usageUnit, conversionFactor)
+		if err != nil {
+			return err
+		}
+
+		// Simpan batch number untuk reply message
+		a.log.DebugContext(ctx, "consumption cycle created/updated", "item", itemName, "batch", cycle.BatchNumber)
+		return nil
+	})
+
+	if err != nil {
+		a.log.ErrorContext(ctx, "gagal handle usage dengan consumption", "err", err)
+		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mulai pemakaian: %v", err))
+	}
+
+	// Invalidate cache
+	a.invCache.Delete(msg.ChatID)
+
+	// Get updated stock dan active cycle untuk batch info
+	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
+	if err != nil {
+		return a.reply(ctx, msg.ChatID, fmt.Sprintf("🔄 Pemakaian %s %.1f %s dicatat. Consumption cycle dimulai dengan auto-generated batch!", itemName, usageQty, usageUnit))
+	}
+
+	// Get cycle info untuk menampilkan batch number
+	cycle, err := a.consumptionService.cycleRepo.GetActiveByItem(ctx, msg.ChatID, itemName)
+	if err != nil {
+		return a.reply(ctx, msg.ChatID, fmt.Sprintf(
+			"🔄 Pemakaian %s %.1f %s dicatat.\n✅ Consumption cycle: OPEN\n📦 Sisa stok: %.1f %s",
+			itemName, usageQty, usageUnit, updatedInv.StockQty, updatedInv.Unit,
+		))
+	}
+
+	batchInfo := ""
+	if cycle.BatchNumber != "" {
+		batchInfo = fmt.Sprintf(" (%s)", cycle.BatchNumber)
+	}
+
+	return a.reply(ctx, msg.ChatID, fmt.Sprintf(
+		"🔄 Pemakaian %s%s %.1f %s dicatat.\n✅ Consumption cycle: OPEN\n📦 Sisa stok: %.1f %s",
+		itemName, batchInfo, usageQty, usageUnit, updatedInv.StockQty, updatedInv.Unit,
+	))
 }
 
 // initReply memilih template konfirmasi init sesuai ada/tidak-nya nama ledger.

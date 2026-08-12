@@ -192,8 +192,9 @@ Action types yang tersedia:
 3. "info" - permintaan informasi sesi/chat (contoh: "info", "sesi", "session", "identitas", "debug")
 4. "get_stock" - query stok/inventory (contoh: "stok", "stock", "sisa", "persediaan", "inventaris", "stok kecap", "sisa air")
 5. "get_report" - query laporan keuangan/pemakaian (contoh: "pengeluaran hari ini", "pemasukan bulan ini", "ringkasan kemarin", "analisa konsumsi")
-6. "record_transaction" - pencatatan transaksi (income/expense/consumption)
-7. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
+6. "consumption" - analisa konsumsi aktif (contoh: "konsumsi susu", "analisa pemakaian popok", "berapa habis per hari")
+7. "record_transaction" - pencatatan transaksi (income/expense/consumption)
+8. "none" - pesan tidak dikenali atau chitchat (sapaan, kosong, tidak relevan)
 
 Aturan klasifikasi:
 - Prioritas: init > help > info > get_stock > get_report > record_transaction > none
@@ -233,5 +234,6 @@ Contoh output:
 {"action":"get_stock","params":{}}
 {"action":"get_report","params":{"report_type":"summary","period":"today"}}
 {"action":"get_report","params":{"report_type":"expense","period":"this_month"}}
+{"action":"consumption","params":{"item_name":"susu"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

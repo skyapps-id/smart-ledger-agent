@@ -45,6 +45,7 @@ func main() {
 	txnRepo := repository.NewTransactionRepository(db)
 	invRepo := repository.NewInventoryRepository(db)
 	logRepo := repository.NewStockLogRepository(db)
+	consumptionCycleRepo := repository.NewConsumptionCycleRepository(db)
 
 	// ── External clients ──
 	extractor := llm.New(cfg.LLM)
@@ -65,7 +66,7 @@ func main() {
 	wahaSenderWorker.Start()
 
 	// ── Service ──
-	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, extractor, intentExtractor, wahaSenderWorker, logger)
+	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, consumptionCycleRepo, extractor, intentExtractor, wahaSenderWorker, logger)
 
 	// ── Worker pool (LLM processing, concurrent) ──
 	pool := worker.New(

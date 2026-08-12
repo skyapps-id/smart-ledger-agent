@@ -94,6 +94,35 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 		return a.reply(ctx, msg.ChatID, "Maaf, gagal memahami pesan. Coba kirim ulang ya.")
 	}
 
+	// Validation logic untuk fix LLM inconsistency
+	lowerText := strings.ToLower(msg.Text)
+	if action.Action == domain.ActionNone {
+		// Jika LLM bilang 'none' tapi pesan jelas mengandung 'pakai [barang]', override ke consumption
+		if strings.Contains(lowerText, "pakai") && len(strings.Fields(lowerText)) > 1 {
+			a.log.InfoContext(ctx, "override LLM classification: none → consumption (pakai command detected)")
+			action.Action = domain.ActionConsumption
+			action.Params = make(map[string]interface{})
+			action.Params["consumption_action"] = "use"
+			// Extract item name (everything after 'pakai')
+			words := strings.Fields(lowerText)
+			if len(words) > 1 {
+				pakaiIndex := -1
+				for i, word := range words {
+					if word == "pakai" {
+						pakaiIndex = i
+						break
+					}
+				}
+				if pakaiIndex > 0 && len(words) > pakaiIndex+1 {
+					itemName := strings.Join(words[pakaiIndex+1:], " ")
+					action.Params["item_name"] = itemName
+					action.Params["usage_qty"] = 1.0
+					action.Params["usage_unit"] = "pcs"
+				}
+			}
+		}
+	}
+
 	// Route berdasarkan action yang diklasifikasikan oleh LLM
 	switch action.Action {
 	case domain.ActionInit:

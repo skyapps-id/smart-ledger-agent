@@ -86,7 +86,9 @@ flowchart TD
     F --> G[🤖 LLM Intent Classification]
     G --> H{Action?}
 
-    H -- record_transaction --> I1[🤖 LLM #2: Transaction Extraction<br/>+ inventory context]
+    H -- record_transaction --> I1[Keyword Extraction<br/>+ ILIKE Search]
+    
+    I1 --> J[🤖 LLM #2: Transaction Extraction<br/>+ relevant inventory 1-5 items]
 
     subgraph DB[Database]
         DB1[(transactions)]
@@ -95,21 +97,21 @@ flowchart TD
         DB4[(consumption_cycles)]
     end
 
-    I1 -- INCOME --> DB1
-    I1 -- EXPENSE --> DB1 & DB2 & DB3
-    I1 -- CONSUMPTION --> DB2 & DB3 & DB4
+    J -- INCOME --> DB1
+    J -- EXPENSE --> DB1 & DB2 & DB3
+    J -- CONSUMPTION --> DB2 & DB3 & DB4
 
     H -- consumption --> I2[Consumption cycle ops<br/>use / update / complete / list]
     I2 --> DB4 & DB2 & DB3
 
-    H -- get_stock --> I3[Query inventory]
+    H -- get_stock --> I3[Category Summary<br/>or ILIKE Search]
     I3 --> DB2
     H -- get_report --> I4[Aggregate transactions]
     I4 --> DB1
     H -- init/help/info/none --> I5[Template / metadata]
 
     DB1 & DB2 & DB3 & DB4 & I5 --> R
-    R[📝 Format reply] --> S[📤 WAHA Queue rate-limited 2-5s]
+    R[📝 Format reply + Cost] --> S[📤 WAHA Queue rate-limited 2-5s]
     S --> T[📱 Reply delivered]
 ```
 

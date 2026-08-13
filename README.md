@@ -621,19 +621,32 @@ OPENROUTER_MODEL=deepseek/deepseek-chat  # Can be switched to other models
 
 **Model Options for Intent Classification:**
 
-| Model | JSON Consistency | Speed | Cost | Best For | Pricing |
-|-------|-----------------|-------|------|----------|---------|
-| `deepseek/deepseek-chat` (current) | ⭐⭐ Inconsistent | ⭐⭐⭐⭐ Fast | Low | Chat, general purpose | ~$0.14/M tokens |
-| `meta-llama/llama-3-8b-instruct` | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐⭐ Medium | Higher | **Production** | ~$0.15-0.50/M tokens |
-| `liquid/lfm-2.5-2.6b:free` | ⭐⭐⭐ Good | ⭐⭐⭐⭐ Very Fast | **FREE** | Development/Testing | **FREE** |
-| `mistralai/mistral-7b-instruct-v0.3` | ⭐⭐⭐⭐ Good | ⭐⭐⭐⭐ Fast | Medium | Production budget | ~$0.10-0.30/M tokens |
-| `google/gemma-3-4b-it:free` | ⭐⭐⭐ Fair | ⭐⭐⭐⭐ Fast | **FREE** | Alternative free | **FREE** |
-| `inclusionai/ling-3.0-tiny:free` | ⭐⭐ Basic | ⭐⭐⭐⭐⭐ Very Fast | **FREE** | Simple classification only | **FREE** |
+> **Free models list:** [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0&order=most-popular&output_modalities=text)
+
+**Free Models (via OpenRouter):**
+
+| Model | Params | Context | Best For |
+|-------|--------|---------|----------|
+| `google/gemma-4-31b-it:free` | 31B | 262K | **Best free option** - large model, good JSON consistency |
+| `google/gemma-4-26b-a4b-it:free` | 26B | 262K | Good balance of size and speed |
+| `openai/gpt-oss-20b:free` | 20B | 131K | OpenAI open-source, reliable JSON output |
+| `nvidia/nemotron-3.5-lightning:free` | - | 1M | Fast, huge context window |
+| `liquid/lfm-2.5-2.6b:free` | 2.6B | 128K | Lightweight, fastest |
+| `inclusionai/ling-3.0-tiny:free` | ~3B | 262K | Ultra-light, simple tasks |
+
+**Paid Models (for production):**
+
+| Model | JSON Consistency | Speed | Best For | Pricing |
+|-------|-----------------|-------|----------|---------|
+| `meta-llama/llama-3-8b-instruct` | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐⭐ | **Production** | ~$0.15-0.50/M |
+| `mistralai/mistral-7b-instruct-v0.3` | ⭐⭐⭐⭐ Good | ⭐⭐⭐⭐ | Budget production | ~$0.10-0.30/M |
+| `deepseek/deepseek-chat` (current default) | ⭐⭐ Inconsistent | ⭐⭐⭐⭐ | Chat, general purpose | ~$0.14/M |
 
 **Recommendations:**
-- **Development/Testing:** `liquid/lfm-2.5-2.6b:free` (free & capable)
-- **Production:** `meta-llama/llama-3-8b-instruct` (best JSON consistency)
-- **Budget Production:** `mistralai/mistral-7b-instruct-v0.3` (balance)
+- **Free / Development:** `google/gemma-4-31b-it:free` (best free model for JSON output)
+- **Free / Lightweight:** `openai/gpt-oss-20b:free` (reliable OpenAI open-source)
+- **Production:** `meta-llama/llama-3-8b-instruct` (best JSON consistency overall)
+- **Budget Production:** `mistralai/mistral-7b-instruct-v0.3` (good balance)
 
 **Why NOT deepseek/deepseek-chat for classification?**
 - Designed for chat, not structured output
@@ -643,15 +656,16 @@ OPENROUTER_MODEL=deepseek/deepseek-chat  # Can be switched to other models
 
 **To switch models:**
 ```bash
-# Update .env file
+# Free option (recommended for dev)
+OPENROUTER_MODEL=google/gemma-4-31b-it:free
+
+# OpenAI open-source (reliable JSON)
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
+
+# Production (best JSON consistency)
 OPENROUTER_MODEL=meta-llama/llama-3-8b-instruct
 
-# Or for free development
-OPENROUTER_MODEL=liquid/lfm-2.5-2.6b:free
-
 # Restart app
-docker compose restart app
-# or
 make dev
 ```
 

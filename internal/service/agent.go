@@ -94,6 +94,8 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))
 	}
 
+	a.log.InfoContext(ctx, "intent terklasifikasi", "action", action.Action, "params", action.Params)
+
 	// Route berdasarkan action yang diklasifikasikan oleh LLM
 	switch action.Action {
 	case domain.ActionInit:
@@ -457,6 +459,7 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 
 // handleConsumptionAction menangani action konsumsi dari LLM.
 func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.IncomingMessage, params map[string]interface{}) error {
+	a.log.InfoContext(ctx, "handler: consumption", "params", params)
 	// Ambil parameter yang diperlukan
 	itemName, ok := params["item_name"].(string)
 	if !ok || itemName == "" {
@@ -491,6 +494,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		}
 
 		usageUnit, _ := params["usage_unit"].(string)
+		a.log.InfoContext(ctx, "consumption use", "item", itemName, "usage_qty", usageQty, "usage_unit", usageUnit)
 		
 		// Extract satuan asli dari nama item untuk consumption tracking yang akurat
 		originalUnit := a.extractOriginalUnitFromItemName(itemName)
@@ -520,6 +524,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 	case "update":
 		// "terpakai" - update nilai konsumsi untuk cycle yang sudah ada
 		batchNumber, _ := params["batch_number"].(string)
+		a.log.InfoContext(ctx, "consumption update", "item", itemName, "batch", batchNumber, "params", params)
 		if batchNumber == "" {
 			return a.reply(ctx, msg.ChatID, "Maaf, perlu sebut batch number untuk update konsumsi. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"")
 		}
@@ -545,6 +550,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 	case "complete", "finish":
 		// "habis" - selesaikan consumption cycle
 		batchNumber, _ := params["batch_number"].(string)
+		a.log.InfoContext(ctx, "consumption complete", "item", itemName, "batch", batchNumber)
 		result, err = a.consumptionService.CompleteUsage(ctx, msg.ChatID, itemName, batchNumber)
 		if err != nil {
 			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal menyelesaikan consumption: %v", err))
@@ -753,6 +759,7 @@ func initReply(name string) string {
 
 // handleInitAction menangani action init (aktivasi ledger).
 func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+	a.log.InfoContext(ctx, "handler: init", "params", params)
 	// Extract ledger name dari params
 	var ledgerName string
 	if name, ok := params["ledger_name"].(string); ok {
@@ -780,6 +787,7 @@ func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage
 
 // handleGetStock menangani action get_stock (query stok/inventory).
 func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+	a.log.InfoContext(ctx, "handler: get_stock", "params", params)
 	if !chat.Initialized {
 		return a.reply(ctx, msg.ChatID, PreInitMessage)
 	}
@@ -822,6 +830,7 @@ func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, 
 
 // handleGetReport menangani action get_report (query laporan).
 func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+	a.log.InfoContext(ctx, "handler: get_report", "params", params)
 	if !chat.Initialized {
 		return a.reply(ctx, msg.ChatID, PreInitMessage)
 	}
@@ -856,6 +865,7 @@ func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage,
 
 // handleRecordTransaction menangani action record_transaction (pencatatan transaksi).
 func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat) error {
+	a.log.InfoContext(ctx, "handler: record_transaction")
 	if !chat.Initialized {
 		return a.reply(ctx, msg.ChatID, PreInitMessage)
 	}

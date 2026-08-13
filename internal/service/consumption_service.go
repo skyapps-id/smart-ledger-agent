@@ -65,12 +65,28 @@ func (s *ConsumptionService) StartCycleWithDate(ctx context.Context, chatID, ite
 }
 
 // generateBatchNumber membuat batch number otomatis dengan format: MMM-DD-HHmmss
-// Contoh: AUG-12-204315
 func generateBatchNumber() string {
 	now := time.Now()
 	months := []string{"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"}
 	month := months[int(now.Month())-1]
 	return fmt.Sprintf("%s-%02d-%02d%02d%02d", month, now.Day(), now.Hour(), now.Minute(), now.Second())
+}
+
+// parseUsageDate parse tanggal dari berbagai format (YYYY-MM-DD, DD/MM, DD/MM/YYYY)
+func parseUsageDate(dateStr string) (time.Time, error) {
+	// YYYY-MM-DD
+	if parsed, err := time.Parse("2006-01-02", dateStr); err == nil {
+		return parsed, nil
+	}
+	// DD/MM/YYYY
+	if parsed, err := time.Parse("02/01/2006", dateStr); err == nil {
+		return parsed, nil
+	}
+	// DD/MM (tahun sekarang)
+	if parsed, err := time.Parse("02/01", dateStr); err == nil {
+		return time.Date(time.Now().Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.Local), nil
+	}
+	return time.Time{}, fmt.Errorf("format tanggal tidak dikenali: %s", dateStr)
 }
 
 // determineSmallestUnit menentukan satuan terkecil berdasarkan satuan pembelian dan item name
@@ -177,9 +193,17 @@ func determineSmallestUnitFromName(itemName string) string {
 
 // StartUsage memulai pemakaian item (saat user bilang "pakai susu 400gr").
 // Ini akan membuat consumption cycle baru dengan auto-generated batch number.
-func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName string, usageQty float64, usageUnit string, conversionFactor float64) (*domain.ConsumptionCycle, error) {
+func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName string, usageQty float64, usageUnit string, conversionFactor float64, usageDate string) (*domain.ConsumptionCycle, error) {
 	// Auto-generate batch number
 	batchNumber := generateBatchNumber()
+
+	// Parse usage date, default ke time.Now()
+	startDate := time.Now()
+	if usageDate != "" {
+		if parsed, err := parseUsageDate(usageDate); err == nil {
+			startDate = parsed
+		}
+	}
 
 	// Extract original unit from item name untuk tracking yang akurat
 	originalUnit := extractOriginalUnitFromItemName(itemName)
@@ -208,7 +232,7 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 		ChatID:           chatID,
 		ItemName:         itemName,
 		BatchNumber:      batchNumber,
-		StartDate:        time.Now(),
+		StartDate:        startDate,
 		PurchaseQty:      usageQty,    // gunakan quantity dari inventory (pcs)
 		PurchaseUnit:     usageUnit,   // gunakan unit dari inventory (pcs)  
 		ConversionFactor: finalConversionFactor,

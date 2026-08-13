@@ -230,6 +230,8 @@ ATURAN KHUSUS: Kata "pakai" SELALU = consumption dengan action "use"
 - Contoh: "pakai susu uht 500ml 100ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":100,"usage_unit":"ml"}}
 - Contoh: "pakai popok" → {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 - Contoh: "pakai susu 2 botol" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":2,"usage_unit":"botol"}}
+- Contoh: "pakai beras 1 kg 05/08" → {"action":"consumption","params":{"consumption_action":"use","item_name":"beras","usage_qty":1,"usage_unit":"kg","usage_date":"2026-08-05"}}
+- Contoh: "pakai susu uht 500ml 05/08" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs","usage_date":"2026-08-05"}}
 - PENTING: "pakai beras 1 kg" BUKAN record_transaction. Tidak ada uang transaksi. Ini CONSUMPTION.
 
 ATURAN KHUSUS: Kata "konsumsi" SELALU = consumption
@@ -291,6 +293,7 @@ Untuk "consumption":
 - consumption_action (string, optional): salah satu dari "info", "list", "use", "complete", "calculate", "history", "update" - default "info"
 - usage_qty (number, optional): jumlah pemakaian untuk action "use" atau "update" - default 1
 - usage_unit (string, optional): satuan pemakaian untuk action "use" atau "update" - default "pcs"
+- usage_date (string, optional): tanggal pemakaian format "YYYY-MM-DD" atau "DD/MM" untuk action "use" - kosongkan bila tidak disebut
 - batch_number (string, optional): nomor batch untuk action "update" atau "complete"
 
 Untuk "record_transaction":

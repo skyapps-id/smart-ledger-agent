@@ -426,7 +426,7 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 			conversionFactor = a.getConversionFactor(originalUnit)
 		}
 		
-		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, ext.ItemName, quantityInOriginalUnit, originalUnit, conversionFactor)
+		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, ext.ItemName, quantityInOriginalUnit, originalUnit, conversionFactor, ext.TransactionDate)
 		return err
 	})
 	if err != nil {
@@ -494,7 +494,8 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		}
 
 		usageUnit, _ := params["usage_unit"].(string)
-		a.log.InfoContext(ctx, "consumption use", "item", itemName, "usage_qty", usageQty, "usage_unit", usageUnit)
+		usageDate, _ := params["usage_date"].(string)
+		a.log.InfoContext(ctx, "consumption use", "item", itemName, "usage_qty", usageQty, "usage_unit", usageUnit, "usage_date", usageDate)
 		
 		// Extract satuan asli dari nama item untuk consumption tracking yang akurat
 		originalUnit := a.extractOriginalUnitFromItemName(itemName)
@@ -504,7 +505,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		if originalUnit != "" && originalQty > 0 {
 			// Untuk inventory: kurangi dalam pcs (usageQty dari LLM)
 			// Untuk consumption: simpan dalam satuan asli (originalQty dalam originalUnit)
-			err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, originalQty, originalUnit)
+			err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, originalQty, originalUnit, usageDate)
 			return err // handleUsageWithConsumption already sends reply
 		}
 		
@@ -518,7 +519,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		}
 
 		// Kurangi stok dan mulai consumption cycle dengan auto-generated batch
-		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, 0.0, "")
+		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, 0.0, "", usageDate)
 		return err // handleUsageWithConsumption already sends reply
 
 	case "update":
@@ -652,7 +653,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 }
 
 // handleUsageWithConsumption menangani "pakai" action: kurangi stok + mulai consumption cycle.
-func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, originalQty float64, originalUnit string) error {
+func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, originalQty float64, originalUnit string, usageDate string) error {
 	// Cek inventory item dulu
 	inv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
 	if err != nil {
@@ -703,7 +704,7 @@ func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.Incom
 		}
 
 		// Mulai/update consumption cycle dengan satuan asli untuk tracking akurat
-		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, itemName, finalConsumptionQty, finalConsumptionUnit, conversionFactor)
+		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, itemName, finalConsumptionQty, finalConsumptionUnit, conversionFactor, usageDate)
 		if err != nil {
 			return err
 		}

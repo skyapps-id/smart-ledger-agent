@@ -526,56 +526,49 @@ tail -f logs/app.log | grep -E "worker|queue|retry"
 
 ### LLM Configuration
 
-The system uses OpenRouter as the LLM provider, allowing easy model switching:
+The system supports both **DeepSeek API direct** and **OpenRouter** as LLM providers:
 
 ```env
-# .env configuration
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_API_KEY=your_key_here
-OPENROUTER_MODEL=deepseek/deepseek-chat  # Can be switched to other models
+# Option 1: DeepSeek API direct (recommended — more stable, cheaper, built-in context caching)
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=your_deepseek_api_key
+LLM_MODEL=deepseek-chat
+
+# Option 2: Via OpenRouter (fallback)
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=your_openrouter_api_key
+LLM_MODEL=deepseek/deepseek-chat
 ```
 
-**Model Options for Intent Classification:**
+**DeepSeek API direct advantages:**
+- Context caching **enabled by default** (disk-based, persists hours to days)
+- No rate limit issues from intermediary (OpenRouter)
+- Cache hit tokens reported in `usage.prompt_cache_hit_tokens`
+- Lower latency (direct connection)
+
+**Free models via OpenRouter:**
 
 > **Free models list:** [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0&order=most-popular&output_modalities=text)
-
-**Free Models (via OpenRouter):**
 
 | Model | Params | Context | Best For |
 |-------|--------|---------|----------|
 | `google/gemma-4-31b-it:free` | 31B | 262K | **Best free option** - large model, good JSON consistency |
-| `google/gemma-4-26b-a4b-it:free` | 26B | 262K | Good balance of size and speed |
 | `openai/gpt-oss-20b:free` | 20B | 131K | OpenAI open-source, reliable JSON output |
 | `nvidia/nemotron-3.5-lightning:free` | - | 1M | Fast, huge context window |
 | `liquid/lfm-2.5-2.6b:free` | 2.6B | 128K | Lightweight, fastest |
-| `inclusionai/ling-3.0-tiny:free` | ~3B | 262K | Ultra-light, simple tasks |
-
-**Recommendations:**
-- **Free / Development:** `google/gemma-4-31b-it:free` (best free model for JSON output)
-- **Free / Lightweight:** `openai/gpt-oss-20b:free` (reliable OpenAI open-source)
-- **Production:** `meta-llama/llama-3-8b-instruct` (best JSON consistency overall)
-- **Budget Production:** `mistralai/mistral-7b-instruct-v0.3` (good balance)
-
-**Why NOT deepseek/deepseek-chat for classification?**
-- Designed for chat, not structured output
-- JSON responses inconsistent
-- Random behavior on same input
-- Better for conversational AI than intent classification
 
 **To switch models:**
 ```bash
-# Free option (recommended for dev)
-OPENROUTER_MODEL=google/gemma-4-31b-it:free
-
-# OpenAI open-source (reliable JSON)
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
-
-# Production (best JSON consistency)
-OPENROUTER_MODEL=meta-llama/llama-3-8b-instruct
+# DeepSeek direct (recommended)
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=your_key
+LLM_MODEL=deepseek-chat
 
 # Restart app
 make dev
 ```
+
+**Note:** `session_id` is automatically sent only when using OpenRouter (for sticky routing / prompt caching). DeepSeek API has context caching enabled by default — no configuration needed.
 
 ---
 

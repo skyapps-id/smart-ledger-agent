@@ -71,9 +71,9 @@ func Load() (*Config, error) {
 			WebhookToken: env("WAHA_WEBHOOK_TOKEN", ""),
 		},
 		LLM: LLMConfig{
-			BaseURL: env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-			APIKey:  env("OPENROUTER_API_KEY", ""),
-			Model:   env("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
+			BaseURL: env("LLM_BASE_URL", env("OPENROUTER_BASE_URL", "https://api.deepseek.com")),
+			APIKey:  env("LLM_API_KEY", env("OPENROUTER_API_KEY", "")),
+			Model:   env("LLM_MODEL", env("OPENROUTER_MODEL", "deepseek-chat")),
 		},
 		Worker: WorkerConfig{
 			Concurrency: envInt("WORKER_CONCURRENCY", 4), // LLM workers tetap concurrent

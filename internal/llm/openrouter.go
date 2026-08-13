@@ -61,6 +61,36 @@ type chatRequest struct {
 	SessionID      string        `json:"session_id,omitempty"`
 }
 
+// shouldSendSessionID mengecek apakah base URL adalah OpenRouter.
+// session_id hanya berguna untuk sticky routing di OpenRouter.
+func (c *openRouterClient) shouldSendSessionID() bool {
+	return strings.Contains(c.cfg.BaseURL, "openrouter.ai")
+}
+
+// buildChatRequest membuat chatRequest dengan session_id hanya untuk OpenRouter.
+func (c *openRouterClient) buildChatRequest(messages []chatMessage, sessionID string) chatRequest {
+	req := chatRequest{
+		Model:          c.cfg.Model,
+		Messages:       messages,
+		Temperature:    0,
+		ResponseFormat: &respFormat{Type: "json_object"},
+	}
+	if c.shouldSendSessionID() && sessionID != "" {
+		req.SessionID = sessionID
+	}
+	return req
+}
+
+// setHeaders men-set HTTP headers. OpenRouter butuh header tambahan.
+func (c *openRouterClient) setHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	if c.shouldSendSessionID() {
+		req.Header.Set("HTTP-Referer", "https://github.com/smart-ledger-agent")
+		req.Header.Set("X-Title", "smart-ledger-agent")
+	}
+}
+
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -88,16 +118,10 @@ func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventor
 		systemPrompt += inventoryContext
 	}
 
-	body := chatRequest{
-		Model: c.cfg.Model,
-		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: BuildUserPrompt(rawText)},
-		},
-		Temperature:    0,
-		ResponseFormat: &respFormat{Type: "json_object"},
-		SessionID:      sessionID,
-	}
+	body := c.buildChatRequest([]chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: BuildUserPrompt(rawText)},
+	}, sessionID)
 
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -108,10 +132,7 @@ func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventor
 	if err != nil {
 		return domain.Extraction{}, fmt.Errorf("buat request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	req.Header.Set("HTTP-Referer", "https://github.com/smart-ledger-agent")
-	req.Header.Set("X-Title", "smart-ledger-agent")
+	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -162,16 +183,10 @@ func parseContent(content string) (domain.Extraction, error) {
 
 // ClassifyIntent mengklasifikasikan intent pesan pengguna menggunakan LLM.
 func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error) {
-	body := chatRequest{
-		Model: c.cfg.Model,
-		Messages: []chatMessage{
-			{Role: "system", Content: SystemPromptIntent},
-			{Role: "user", Content: "Klasifikasikan pesan ini: " + strings.TrimSpace(rawText)},
-		},
-		Temperature:    0,
-		ResponseFormat: &respFormat{Type: "json_object"},
-		SessionID:      sessionID,
-	}
+	body := c.buildChatRequest([]chatMessage{
+		{Role: "system", Content: SystemPromptIntent},
+		{Role: "user", Content: "Klasifikasikan pesan ini: " + strings.TrimSpace(rawText)},
+	}, sessionID)
 
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -182,10 +197,7 @@ func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, s
 	if err != nil {
 		return domain.ServiceAction{}, fmt.Errorf("buat request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	req.Header.Set("HTTP-Referer", "https://github.com/smart-ledger-agent")
-	req.Header.Set("X-Title", "smart-ledger-agent")
+	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

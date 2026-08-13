@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -216,6 +217,10 @@ func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string) (
 	if err != nil {
 		return domain.ServiceAction{}, fmt.Errorf("parsing JSON LLM: %w", err)
 	}
+
+	// Log raw response untuk debugging param extraction
+	log.Printf("[LLM INTENT] raw=%s action=%s params=%v", truncate(chat.Choices[0].Message.Content, 300), action.Action, action.Params)
+
 	return action, nil
 }
 

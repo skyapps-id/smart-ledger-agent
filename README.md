@@ -634,14 +634,6 @@ OPENROUTER_MODEL=deepseek/deepseek-chat  # Can be switched to other models
 | `liquid/lfm-2.5-2.6b:free` | 2.6B | 128K | Lightweight, fastest |
 | `inclusionai/ling-3.0-tiny:free` | ~3B | 262K | Ultra-light, simple tasks |
 
-**Paid Models (for production):**
-
-| Model | JSON Consistency | Speed | Best For | Pricing |
-|-------|-----------------|-------|----------|---------|
-| `meta-llama/llama-3-8b-instruct` | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐⭐ | **Production** | ~$0.15-0.50/M |
-| `mistralai/mistral-7b-instruct-v0.3` | ⭐⭐⭐⭐ Good | ⭐⭐⭐⭐ | Budget production | ~$0.10-0.30/M |
-| `deepseek/deepseek-chat` (current default) | ⭐⭐ Inconsistent | ⭐⭐⭐⭐ | Chat, general purpose | ~$0.14/M |
-
 **Recommendations:**
 - **Free / Development:** `google/gemma-4-31b-it:free` (best free model for JSON output)
 - **Free / Lightweight:** `openai/gpt-oss-20b:free` (reliable OpenAI open-source)

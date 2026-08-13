@@ -66,7 +66,7 @@ flowchart TD
 - Prevents WhatsApp anti-spam detection
 - Human-like message timing
 
-### Lifecycle of a Message (LLM-Based Architecture)
+### Lifecycle of a Message
 
 ```mermaid
 flowchart TD
@@ -74,29 +74,40 @@ flowchart TD
     B -- no --> X1[401 Unauthorized]
     B -- yes --> C{event=message<br/>and !fromMe?}
     C -- no --> X2[200 ignored]
-    C -- yes --> D{Suffix @g.us?}
-    D -- yes --> E{Bot mentioned?<br/>@mention detected}
-    E -- no --> X3[200 ignored<br/>anti-spam]
+    C -- yes --> D{Group @g.us?}
+    D -- yes --> E{Bot @mentioned?}
+    E -- no --> X3[200 ignored anti-spam]
     E -- yes --> F[Strip @bot token]
     D -- no --> F
+
     F --> G[🤖 LLM Intent Classification]
-    G --> H[Action Determined<br/>+ Parameters Extracted]
-    H --> I{Action Type?}
-    I -- init --> J[handleInitAction<br/>Initialize Ledger]
-    I -- help --> K[Reply with Onboarding]
-    I -- info --> L[handleInfo<br/>Session Details]
-    I -- get_stock --> M[handleGetStock<br/>Query Inventory]
-    I -- get_report --> N[handleGetReport<br/>Generate Report]
-    I -- record_transaction --> O[handleRecordTransaction<br/>LLM Extract + Persist]
-    I -- consumption --> R[handleConsumptionAction<br/>Use / Complete]
-    I -- none --> P[SmallTalk Reply]
-    J --> Q[WAHA Reply]
-    K --> Q
-    L --> Q
-    M --> Q
-    N --> Q
-    O --> Q
-    P --> Q
+    G --> H{Action?}
+
+    H -- record_transaction --> I1[🤖 LLM #2: Transaction Extraction<br/>+ inventory context]
+
+    subgraph DB[Database]
+        DB1[(transactions)]
+        DB2[(inventory)]
+        DB3[(stock_logs)]
+        DB4[(consumption_cycles)]
+    end
+
+    I1 -- INCOME --> DB1
+    I1 -- EXPENSE --> DB1 & DB2 & DB3
+    I1 -- CONSUMPTION --> DB2 & DB3 & DB4
+
+    H -- consumption --> I2[Consumption cycle ops<br/>use / update / complete / list]
+    I2 --> DB4 & DB2 & DB3
+
+    H -- get_stock --> I3[Query inventory]
+    I3 --> DB2
+    H -- get_report --> I4[Aggregate transactions]
+    I4 --> DB1
+    H -- init/help/info/none --> I5[Template / metadata]
+
+    DB1 & DB2 & DB3 & DB4 & I5 --> R
+    R[📝 Format reply] --> S[📤 WAHA Queue rate-limited 2-5s]
+    S --> T[📱 Reply delivered]
 ```
 
 ### Inventory Context & Cache
@@ -114,31 +125,32 @@ Before every LLM extraction, the agent loads the chat's current inventory snapsh
 
 The system uses LLM as a **translator/adapter** from natural language to structured service API calls.
 
-#### How It Works: "Cek Stock Kecap" Example
+#### Transaction Types
 
-```mermaid
-flowchart TD
-    A[User: cek stock kecap] --> B[LLM Intent Classification]
-    B --> C[Action: get_stock<br/>Params: item_filter=kecap]
-    C --> D[Agent Routing<br/>Switch to handleGetStock]
-    D --> E[Query Inventory<br/>WHERE name LIKE kecap]
-    E --> F[Format Response<br/>formatStock function]
-    F --> G[Reply via WAHA<br/>Stok saat ini kecap<br/>- Kecap Manis: 5 botol<br/>- Kecap Asin: 3 botol]
-```
+| Type | Description |
+|------|-------------|
+| `INCOME` | Money in (salary, bonus, transfer received) |
+| `EXPENSE` | Buying goods/services (money out) |
+| `CONSUMPTION` | Using stock items, no money involved |
+| `NONE` | Not a transaction (greeting, chitchat) |
 
-#### Supported Query Patterns
+#### Intent Routing Priority
 
-The LLM intent classifier handles **10+ variations**:
+The intent classifier evaluates messages top-down and stops at the first match:
 
-| Query Pattern | Example | Works? |
-|--------------|---------|--------|
-| Direct pattern | `"cek stock kecap"` | ✅ |
-| Short pattern | `"stok kecap"` | ✅ |
-| Alternative words | `"sisa kecap"`, `"persediaan kecap"`, `"inventaris kecap"` | ✅ |
-| Question format | `"berapa stok kecap?"` | ✅ |
-| **Typo tolerance** | `"persedian kecap"` | ✅ |
-| Complete sentence | `"cek sisa stok kecap di rumah"` | ✅ |
-| General queries | `"stok"`, `"sisa"` | ✅ (show all) |
+| Priority | Keyword / Pattern | Action | Examples |
+|----------|-------------------|--------|----------|
+| 1 | `pakai` / `terpakai` | `consumption` (use / update) | `"pakai susu uht 500ml"`, `"terpakai susu (AUG-12-152714) 100ml"` |
+| 2 | `konsumsi` | `consumption` (list / info) | `"konsumsi"`, `"konsumsi susu"`, `"konsumsi list"` |
+| 3 | `init` / `help` / `info` | `init` / `help` / `info` | `"init"`, `"bantuan"`, `"info"` |
+| 4 | `beli` / `bayar` / money amount | `record_transaction` | `"beli kopi 15rb"`, `"bayar listrik 200rb"` |
+| 5 | `stok` / `stock` / `sisa` / `persediaan` | `get_stock` | `"stok kecap"`, `"sisa air"`, `"persediaan"` |
+| 6 | `pengeluaran` / `pemasukan` / `laporan` | `get_report` | `"pengeluaran hari ini"`, `"ringkasan kemarin"` |
+| 7 | No match | `none` | `"halo"`, `"pagi"`, chitchat |
+
+**Disambiguation examples:**
+- `"beli stok kecap 50rb"` → `record_transaction` (not `get_stock`, because `beli` + money wins)
+- `"analisa konsumsi susu"` → `consumption` (not `get_report`, because `konsumsi` is higher priority)
 
 #### Implementation Details
 
@@ -152,7 +164,7 @@ The LLM intent classifier handles **10+ variations**:
 - `handleInitAction()` - Ledger initialization
 - `handleGetStock()` - Stock queries with filtering
 - `handleGetReport()` - Financial reports & analysis
-- `handleConsumptionAction()` - Consumption cycle management with smart unit detection
+- `handleConsumptionAction()` - Consumption cycle management (info, list, use, update, complete)
 - `handleRecordTransaction()` - Transaction recording via LLM extraction
 
 **3. Extensibility**
@@ -253,7 +265,7 @@ Tables are created automatically via GORM `AutoMigrate` on application start. Ad
 
 - Go 1.25+
 - Docker + Docker Compose
-- An OpenRouter account (for the DeepSeek API key)
+- An OpenRouter account (for the API key)
 - An active WhatsApp number (this will become the bot)
 
 ### 1. Clone & configure env
@@ -287,7 +299,7 @@ beli semen 5 sak 250rb
 ambil semen 2 sak
 info
 ringkasan
-stok kecap                     # new LLM-based query!
+stok kecap
 cek sisa susu di rumah          # natural language query
 ```
 
@@ -380,83 +392,42 @@ go test -v ./internal/service -run TestFullStockQueryFlow    # Full flow test
 | `info` | Show session metadata (chat_id, sender, status, name, transaction count) |
 | `bantuan` | Show the recording-format guide |
 
-### Natural Language Examples
-
-**Transactions:**
-- `beli kopi 15rb` → EXPENSE automatically classified
-- `gaji masuk 10jt` → INCOME recorded  
-- `ambil susu 2 pcs` → CONSUMPTION tracked
-
-**Stock Queries (10+ variations work):**
-- `cek stock kecap` → Shows inventory for "kecap"
-- `stok susu` → Shows inventory for "susu"  
-- `sisa air` → Shows inventory for "air"
-- `persediaan popok` → Shows inventory for "popok"
-- `inventaris` → Shows all inventory
-- `stock` → Shows all inventory
-
-**Consumption Tracking & Analysis:**
-- `konsumsi` → Shows all active consumption cycles
-- `konsumsi susu` → Shows consumption info for "susu"
-- `konsumsi susu uht` → Shows consumption info for "susu uht"
-- `barang aktif` → Lists all items currently being consumed
-- `pakai susu uht 500ml 1 botol` → Record usage and start consumption cycle
-- `susu uht 500ml sudah habis` → Complete consumption cycle with analytics
-- `analisa konsumsi popok 01/08 hingga 11/08` → Consumption analysis with rate calculation
-
-**Financial Reports:**
-- `pengeluaran hari ini berapa?` → Today's expenses
-- `total pemasukan bulan ini` → Income this month
-- `ringkasan kemarin` → Yesterday's summary
-- `pengeluaran per item kemarin` → Yesterday's expenses per item
-
----
-
-## 📝 Natural Language Examples
-
 ### Transaction Recording
 ```
- beli kopi 15rb                           # → EXPENSE: coffee 15k
- gaji masuk 10jt                           # → INCOME: salary 10M
- beli susu UHT 1 dus isi 50pcs harga 500rb   # → EXPENSE + stock addition
- ambil susu 2 pcs                           # → CONSUMPTION: stock decrease
- saldo awal 5jt                            # → INCOME: opening balance
+beli kopi 15rb                              # → EXPENSE: coffee 15k
+gaji masuk 10jt                             # → INCOME: salary 10M
+beli susu UHT 1 dus isi 50pcs harga 500rb   # → EXPENSE + stock addition
+ambil susu 2 pcs                            # → CONSUMPTION: stock decrease
+saldo awal 5jt                              # → INCOME: opening balance
 ```
 
-### Stock Queries (All variations work)
+### Stock Queries (all variations work)
 ```
- cek stock kecap                             # → Get stock for "kecap"
- stok susu                                   # → Get stock for "susu"  
- sisa air                                   # → Get stock for "air"
- persediaan popok                           # → Get stock for "popok"
- inventaris                                  # → Show all inventory
- barang saya apa aja                         # → Show all inventory
-```
-
-### Financial Reports
-```
-  pengeluaran hari ini berapa                  # → Today's expenses
-  total pemasukan bulan ini                 # → Income this month  
-  pengeluaran per item kemarin              # → Yesterday's expenses per item
-  ringkasan kemarin                         # → Yesterday's summary
+stok                                        # → Show all inventory
+cek stock kecap                             # → Get stock for "kecap"
+stok susu                                   # → Get stock for "susu"
+sisa air                                    # → Get stock for "air"
+persediaan popok                            # → Get stock for "popok"
+barang saya apa aja                         # → Show all inventory
 ```
 
 ### Consumption Tracking
 ```
-  konsumsi                                   # → Shows all active consumption cycles
-  konsumsi susu                              # → Shows consumption info for "susu"
-  konsumsi susu uht 500ml                   # → Shows consumption info for "susu uht 500ml"
-  barang aktif                              # → Lists all items currently being consumed
-  pakai susu uht 500ml 1 botol             # → Record usage and start consumption cycle
-  susu uht 500ml sudah habis                # → Complete consumption cycle with analytics
-  analisa konsumsi popok 01/08 hingga 11/08 # → Consumption analysis with rate calculation
+konsumsi                                    # → Shows all active consumption cycles
+konsumsi list                               # → Same as above (explicit)
+konsumsi susu uht 500ml                     # → Shows consumption info for specific item
+pakai susu uht 500ml                        # → Record usage, start new cycle
+terpakai susu uht 500ml (AUG-12-152714) 100ml  # → Correct consumed amount for a batch
+susu uht 500ml sudah habis                  # → Complete consumption cycle with analytics
+barang aktif                                # → Lists all items currently being consumed
 ```
 
-### Advanced Queries
+### Financial Reports
 ```
-  barang apa aja?                          # → Current inventory list
-  pemakaian barang minggu ini               # → Stock consumption this week
-  stock sisa                                # → Shows all remaining inventory
+pengeluaran hari ini berapa                 # → Today's expenses
+total pemasukan bulan ini                   # → Income this month
+pengeluaran per item kemarin                # → Yesterday's expenses per item
+ringkasan kemarin                           # → Yesterday's summary
 ```
 
 ---
@@ -509,8 +480,6 @@ make clean          # remove bin/ and data/
 # LLM-specific testing
 make test-llm       # test LLM intent classification
 make test-flow      # test full flow simulation
-
-
 ```
 
 ### Working with LLM Prompts
@@ -682,7 +651,7 @@ A: Yes! Simply update the `SystemPromptIntent` in `internal/llm/prompt.go` to in
 A: The system has built-in retry logic with exponential backoff. Configure `WORKER_MAX_RETRIES` and monitor logs for LLM errors.
 
 **Q: How accurate is the intent classification?**
-A: In testing, the system achieved 100% accuracy on 15+ test patterns including variations, typos, and complete sentences.
+A: The system handles common typos and variations via LLM classification. Examples like `"persedian kecap"` (typo for "persediaan") are correctly classified. Accuracy depends on the LLM model used — see model recommendations above.
 
 **Q: Can I switch to a different LLM model?**
 A: Yes! Update `OPENROUTER_MODEL` in your `.env` file. The prompts are designed to work with various instruction-following models.

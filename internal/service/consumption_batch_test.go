@@ -37,7 +37,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 	t.Run("Buka 2 cycle dengan batch berbeda untuk item yang sama", func(t *testing.T) {
 		// STEP 1: Buka cycle pertama (auto-generated batch)
-		cycle1, err := service.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0)
+		cycle1, err := service.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0, "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, cycle1.BatchNumber) // Auto-generated batch
 		assert.Equal(t, "Susu 400gr", cycle1.ItemName)
@@ -50,7 +50,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 		// Baru buat cycle kedua
 		time.Sleep(10 * time.Millisecond) // Small delay untuk StartDate yang berbeda
-		cycle2, err := service.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0)
+		cycle2, err := service.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0, "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, cycle2.BatchNumber) // Auto-generated batch berbeda
 		assert.Equal(t, "Susu 400gr", cycle2.ItemName)
@@ -74,7 +74,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 	t.Run("Complete batch tertentu tanpa affect batch lain", func(t *testing.T) {
 		// Setup: buat cycle pertama
-		cycle1, _ := service.StartUsage(ctx, chatID, "Kopi 1kg", 1, "kg", 1000.0)
+		cycle1, _ := service.StartUsage(ctx, chatID, "Kopi 1kg", 1, "kg", 1000.0, "")
 		batch1 := cycle1.BatchNumber
 
 		// Complete cycle pertama
@@ -89,7 +89,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 		assert.Error(t, err) // Should not find active cycle
 
 		// Buat cycle kedua
-		cycle2, _ := service.StartUsage(ctx, chatID, "Kopi 1kg", 1, "kg", 1000.0)
+		cycle2, _ := service.StartUsage(ctx, chatID, "Kopi 1kg", 1, "kg", 1000.0, "")
 		batch2 := cycle2.BatchNumber
 
 		// Verifikasi cycle kedua masih active
@@ -101,14 +101,14 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 	t.Run("Get info untuk batch spesifik", func(t *testing.T) {
 		// Setup 2 cycles
-		cycleA, _ := service.StartUsage(ctx, chatID, "Teh 250gr", 1, "bungkus", 250.0)
+		cycleA, _ := service.StartUsage(ctx, chatID, "Teh 250gr", 1, "bungkus", 250.0, "")
 		batchA := cycleA.BatchNumber
 
 		// Complete cycle A
 		service.CompleteUsage(ctx, chatID, "Teh 250gr", batchA)
 
 		// Buat cycle B
-		cycleB, _ := service.StartUsage(ctx, chatID, "Teh 250gr", 1, "bungkus", 250.0)
+		cycleB, _ := service.StartUsage(ctx, chatID, "Teh 250gr", 1, "bungkus", 250.0, "")
 		batchB := cycleB.BatchNumber
 
 		// Get info batchB
@@ -132,8 +132,8 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 	t.Run("Auto-generated batch selalu unik", func(t *testing.T) {
 		// Buat beberapa cycle sekaligus untuk testing batch uniqueness
-		cycle1, _ := service.StartUsage(ctx, chatID, "Gula 1kg", 1, "kg", 1000.0)
-		cycle2, _ := service.StartUsage(ctx, chatID, "Gula 1kg", 1, "kg", 1000.0)
+		cycle1, _ := service.StartUsage(ctx, chatID, "Gula 1kg", 1, "kg", 1000.0, "")
+		cycle2, _ := service.StartUsage(ctx, chatID, "Gula 1kg", 1, "kg", 1000.0, "")
 
 		// Batch numbers harus ada
 		assert.NotEmpty(t, cycle1.BatchNumber)
@@ -142,7 +142,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 	t.Run("All cycles punya auto-generated batch", func(t *testing.T) {
 		// Setiap cycle harus punya batch number yang di-generate otomatis
-		cycle, err := service.StartUsage(ctx, chatID, "Gula 1kg", 1, "kg", 1000.0)
+		cycle, err := service.StartUsage(ctx, chatID, "Gula 1kg", 1, "kg", 1000.0, "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, cycle.BatchNumber) // Harus ada auto-generated batch
 
@@ -159,7 +159,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 		pastDate2 := now.Add(-3 * 24 * time.Hour)
 
 		// Cycle 1
-		cycle1, err := service.StartUsage(ctx, chatID, "Minyak 1L", 1, "liter", 1000.0)
+		cycle1, err := service.StartUsage(ctx, chatID, "Minyak 1L", 1, "liter", 1000.0, "")
 		require.NoError(t, err)
 		batch1 := cycle1.BatchNumber
 		cycle1.StartDate = pastDate1
@@ -171,7 +171,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Cycle 2 — sekarang bisa bikin baru karena cycle1 udah completed
-		cycle2, err := service.StartUsage(ctx, chatID, "Minyak 1L", 1, "liter", 1000.0)
+		cycle2, err := service.StartUsage(ctx, chatID, "Minyak 1L", 1, "liter", 1000.0, "")
 		require.NoError(t, err)
 		batch2 := cycle2.BatchNumber
 		cycle2.StartDate = pastDate2

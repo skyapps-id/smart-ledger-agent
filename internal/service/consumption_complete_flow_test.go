@@ -91,7 +91,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			time.Sleep(10 * time.Millisecond) // Small delay untuk StartDate yang berbeda
 
 			// Start consumption cycle
-			cycle, err := consumptionService.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0)
+			cycle, err := consumptionService.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0, "")
 			require.NoError(t, err)
 			assert.Equal(t, domain.ConsumptionCycleActive, cycle.Status)
 			assert.Equal(t, "Susu 400gr", cycle.ItemName)
@@ -186,7 +186,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 
 		// STEP 2: Pakai items
 		for _, item := range items {
-			_, err := consumptionService.StartUsage(ctx, chatID, item.name, item.qty, item.unit, item.conv)
+			_, err := consumptionService.StartUsage(ctx, chatID, item.name, item.qty, item.unit, item.conv, "")
 			require.NoError(t, err)
 
 			inv, err := invRepo.GetByChatItem(ctx, chatID, item.name)

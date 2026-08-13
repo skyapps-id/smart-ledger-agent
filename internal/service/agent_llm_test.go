@@ -106,7 +106,7 @@ func TestGetStockQueryPatterns(t *testing.T) {
 				itemFilter: itemFilter,
 			}
 
-			action, err := extractor.ClassifyIntent(ctx, tc.query)
+			action, err := extractor.ClassifyIntent(ctx, tc.query, "test-session")
 			if err != nil {
 				t.Fatalf("ClassifyIntent failed: %v", err)
 			}
@@ -136,7 +136,7 @@ type mockIntentExtractorWithCustomResponse struct {
 	itemFilter interface{}
 }
 
-func (m *mockIntentExtractorWithCustomResponse) ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error) {
+func (m *mockIntentExtractorWithCustomResponse) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error) {
 	params := make(map[string]interface{})
 	if m.itemFilter != nil && m.itemFilter != "" {
 		params["item_filter"] = m.itemFilter
@@ -162,7 +162,7 @@ func TestFullStockQueryFlow(t *testing.T) {
 	ctx := context.Background()
 	extractor := &mockIntentExtractor{}
 
-	action, err := extractor.ClassifyIntent(ctx, userQuery)
+	action, err := extractor.ClassifyIntent(ctx, userQuery, "test-session")
 	if err != nil {
 		t.Fatalf("Intent classification failed: %v", err)
 	}

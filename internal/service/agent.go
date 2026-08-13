@@ -88,7 +88,7 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 	}
 
 	// LLM Intent Classification
-	action, err := a.intent.ClassifyIntent(ctx, msg.Text)
+	action, err := a.intent.ClassifyIntent(ctx, msg.Text, msg.ChatID)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal klasifikasi intent", "err", err)
 		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))
@@ -876,7 +876,7 @@ func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.Incoming
 	// ke item yang sudah ada di inventory chat ini.
 	items := a.cachedInventory(ctx, msg.ChatID)
 	invContext := llm.BuildInventoryPrompt(items)
-	ext, err := a.llm.Extract(ctx, msg.Text, invContext)
+	ext, err := a.llm.Extract(ctx, msg.Text, invContext, msg.ChatID)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
 		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))

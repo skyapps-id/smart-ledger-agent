@@ -10,7 +10,7 @@ import (
 // MockIntentExtractor untuk testing
 type mockIntentExtractor struct{}
 
-func (m *mockIntentExtractor) ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error) {
+func (m *mockIntentExtractor) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error) {
 	// Mock response untuk "cek stock kecap"
 	return domain.ServiceAction{
 		Action: domain.ActionGetStock,
@@ -51,7 +51,7 @@ func TestIntentClassificationGetStock(t *testing.T) {
 
 	// Test query
 	query := "cek stock kecap"
-	action, err := extractor.ClassifyIntent(ctx, query)
+	action, err := extractor.ClassifyIntent(ctx, query, "test-session")
 
 	if err != nil {
 		t.Fatalf("ClassifyIntent failed: %v", err)

@@ -20,12 +20,12 @@ import (
 
 // Extractor abstraksi klien ekstraksi LLM.
 type Extractor interface {
-	Extract(ctx context.Context, rawText string, inventoryContext string) (domain.Extraction, error)
+	Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, error)
 }
 
 // IntentExtractor abstraksi untuk intent classification menggunakan LLM.
 type IntentExtractor interface {
-	ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error)
+	ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error)
 }
 
 // New membuat klien OpenRouter dengan HTTP client default.
@@ -58,6 +58,7 @@ type chatRequest struct {
 	Messages       []chatMessage `json:"messages"`
 	Temperature    float64       `json:"temperature"`
 	ResponseFormat *respFormat   `json:"response_format,omitempty"`
+	SessionID      string        `json:"session_id,omitempty"`
 }
 
 type chatMessage struct {
@@ -81,7 +82,7 @@ type chatResponse struct {
 // Extract mengirim teks ke LLM dan mengembalikan entitas terstruktur.
 // inventoryContext adalah snapshot inventory chat (hasil BuildInventoryPrompt)
 // yang di-inject sebagai konteks tambahan ke system prompt.
-func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventoryContext string) (domain.Extraction, error) {
+func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, error) {
 	systemPrompt := SystemPrompt
 	if inventoryContext != "" {
 		systemPrompt += inventoryContext
@@ -95,6 +96,7 @@ func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventor
 		},
 		Temperature:    0,
 		ResponseFormat: &respFormat{Type: "json_object"},
+		SessionID:      sessionID,
 	}
 
 	payload, err := json.Marshal(body)
@@ -159,7 +161,7 @@ func parseContent(content string) (domain.Extraction, error) {
 }
 
 // ClassifyIntent mengklasifikasikan intent pesan pengguna menggunakan LLM.
-func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string) (domain.ServiceAction, error) {
+func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error) {
 	body := chatRequest{
 		Model: c.cfg.Model,
 		Messages: []chatMessage{
@@ -168,6 +170,7 @@ func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string) (
 		},
 		Temperature:    0,
 		ResponseFormat: &respFormat{Type: "json_object"},
+		SessionID:      sessionID,
 	}
 
 	payload, err := json.Marshal(body)

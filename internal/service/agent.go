@@ -91,7 +91,7 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 	action, err := a.intent.ClassifyIntent(ctx, msg.Text)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal klasifikasi intent", "err", err)
-		return a.reply(ctx, msg.ChatID, "Maaf, gagal memahami pesan. Coba kirim ulang ya.")
+		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))
 	}
 
 	// Route berdasarkan action yang diklasifikasikan oleh LLM
@@ -868,7 +868,7 @@ func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.Incoming
 	ext, err := a.llm.Extract(ctx, msg.Text, invContext)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
-		return a.reply(ctx, msg.ChatID, "Maaf, gagal memahami pesan. Coba kirim ulang ya.")
+		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))
 	}
 
 	// Pesan non-transaksi (sapaan/chitchat): jangan dicatat, balas ramah.
@@ -1165,6 +1165,22 @@ func (a *Agent) reply(ctx context.Context, chatID, text string) error {
 type businessError struct{ msg string }
 
 func (e *businessError) Error() string { return e.msg }
+
+// llmErrorMessage mengembalikan pesan error yang sesuai berdasarkan tipe error.
+// Dibedakan antara error infrastruktur (OpenRouter) dan error pemahaman pesan.
+func llmErrorMessage(err error) string {
+	var reqErr *llm.RequestError
+	if errors.Is(err, llm.ErrRateLimited) {
+		return "⏳ Server AI sedang sibuk (rate limit). Coba lagi sebentar ya."
+	}
+	if errors.As(err, &reqErr) {
+		return "📡 Gangguan koneksi ke server AI. Coba lagi sebentar ya."
+	}
+	if strings.Contains(err.Error(), "openrouter status") {
+		return "⚠️ Server AI bermasalah. Coba lagi nanti ya."
+	}
+	return "Maaf, gagal memahami pesan. Coba kirim ulang ya."
+}
 
 // formatRupiah memformat angka ke "1.000.000" (titik pemisah ribuan).
 func formatRupiah(n float64) string {

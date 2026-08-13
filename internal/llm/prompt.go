@@ -219,9 +219,13 @@ ATURAN KHUSUS: Kata "pakai" SELALU = consumption dengan action "use"
 - "pakai [barang]" → consumption, action: "use", item_name: [barang], usage_qty: 1, usage_unit: "pcs"
 - "pakai [barang] [jumlah] [satuan]" → consumption, action: "use", item_name: [barang], usage_qty: [jumlah], usage_unit: [satuan]
 - Contoh: "pakai susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
+- Contoh: "pakai beras 1 kg" → {"action":"consumption","params":{"consumption_action":"use","item_name":"beras","usage_qty":1,"usage_unit":"kg"}}
+- Contoh: "pakai beras 5 kg" → {"action":"consumption","params":{"consumption_action":"use","item_name":"beras","usage_qty":5,"usage_unit":"kg"}}
+- Contoh: "pakai minyak 2 liter" → {"action":"consumption","params":{"consumption_action":"use","item_name":"minyak","usage_qty":2,"usage_unit":"liter"}}
 - Contoh: "pakai susu uht 500ml 100ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":100,"usage_unit":"ml"}}
 - Contoh: "pakai popok" → {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 - Contoh: "pakai susu 2 botol" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":2,"usage_unit":"botol"}}
+- PENTING: "pakai beras 1 kg" BUKAN record_transaction. Tidak ada uang transaksi. Ini CONSUMPTION.
 
 ATURAN KHUSUS: Kata "konsumsi" SELALU = consumption
 - "konsumsi" → consumption, action: "list" (default saat tidak ada parameter)
@@ -252,6 +256,8 @@ CONTOH MATCH:
 - "persediaan" → get_stock
 - "pakai susu" → consumption (use action)
 - "pakai susu uht 500ml" → consumption (use action)
+- "pakai beras 1 kg" → consumption (use action) — BUKAN record_transaction!
+- "pakai beras 5 kg" → consumption (use action)
 - "beli susu 50rb" → record_transaction
 - "beli stok kecap 50rb" → record_transaction (BUKAN get_stock, walau ada kata "stok" — lihat prioritas #6)
 - "pengeluaran hari ini" → get_report
@@ -298,6 +304,8 @@ Contoh output:
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"beras","usage_qty":1,"usage_unit":"kg"}}
+{"action":"consumption","params":{"consumption_action":"use","item_name":"beras","usage_qty":5,"usage_unit":"kg"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
 {"action":"consumption","params":{"consumption_action":"complete","item_name":"susu uht 500ml","batch_number":"AUG-12-135918"}}

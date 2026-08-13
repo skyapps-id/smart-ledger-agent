@@ -802,34 +802,60 @@ func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, 
 		itemFilter = filter
 	}
 
-	var items []domain.Inventory
-	var err error
-
+	// Jika ada item filter spesifik, gunakan search approach
 	if itemFilter != "" {
-		// Query spesifik item yang diminta
-		items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
+		items, err := a.invRepo.WithTx(a.db).SearchByName(ctx, msg.ChatID, itemFilter)
 		if err != nil {
-			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
+			a.log.ErrorContext(ctx, "search inventory error", "err", err)
 			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
 		}
-		// Filter items yang match dengan itemFilter
-		filteredItems := make([]domain.Inventory, 0)
-		for _, item := range items {
-			if strings.Contains(strings.ToLower(item.ItemName), strings.ToLower(itemFilter)) {
-				filteredItems = append(filteredItems, item)
+
+		if len(items) == 0 {
+			// Kalau search tidak ketemu, fallback ke manual filter dari semua items
+			allItems, err := a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
+			if err != nil {
+				a.log.ErrorContext(ctx, "gagal query stok", "err", err)
+				return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
 			}
+
+			filteredItems := make([]domain.Inventory, 0)
+			for _, item := range allItems {
+				if strings.Contains(strings.ToLower(item.ItemName), strings.ToLower(itemFilter)) {
+					filteredItems = append(filteredItems, item)
+				}
+			}
+
+			if len(filteredItems) == 0 {
+				return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Tidak ada item '%s' di inventaris.", itemFilter), intentCost)
+			}
+
+			return a.replyWithCost(ctx, msg.ChatID, formatStock(filteredItems, itemFilter), intentCost)
 		}
-		items = filteredItems
-	} else {
-		// Query semua stok
-		items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
-		if err != nil {
-			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
-			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
-		}
+
+		return a.replyWithCost(ctx, msg.ChatID, formatStock(items, itemFilter), intentCost)
 	}
 
-	return a.replyWithCost(ctx, msg.ChatID, formatStock(items, itemFilter), intentCost)
+	// General query "stok" → tampilkan summary kategori untuk hemat tokens
+	summary, err := a.invRepo.WithTx(a.db).GetCategorySummary(ctx, msg.ChatID)
+	if err != nil {
+		a.log.ErrorContext(ctx, "gagal query summary", "err", err)
+		return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
+	}
+
+	// Format summary untuk WhatsApp display
+	var reply strings.Builder
+	reply.WriteString("📦 Stok per Kategori:\n\n")
+
+	totalItems := int64(0)
+	for _, cat := range summary {
+		totalItems += cat.Count
+		reply.WriteString(fmt.Sprintf("• %s: %d item (contoh: %s)\n", cat.Category, cat.Count, cat.Example))
+	}
+
+	reply.WriteString(fmt.Sprintf("\nTotal: %d item", totalItems))
+	reply.WriteString("\n\n💡 Ketik 'stok [kategori]' untuk detail (contoh: 'stok minuman')")
+
+	return a.replyWithCost(ctx, msg.ChatID, reply.String(), intentCost)
 }
 
 // handleGetReport menangani action get_report (query laporan).

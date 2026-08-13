@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -21,6 +23,14 @@ type InventoryRepository interface {
 	DecreaseStock(ctx context.Context, id int64, qty float64) error
 	ListByChat(ctx context.Context, chatID string) ([]domain.Inventory, error)
 	SearchByName(ctx context.Context, chatID, keyword string) ([]domain.Inventory, error)
+	GetCategorySummary(ctx context.Context, chatID string) ([]CategorySummary, error)
+}
+
+// CategorySummary merepresentasikan summary inventory per kategori sederhana.
+type CategorySummary struct {
+	Category string  `json:"category"`
+	Count    int64   `json:"count"`
+	Example  string  `json:"example"` // Contoh item dari kategori ini
 }
 
 type inventoryRepo struct{ db *gorm.DB }
@@ -111,4 +121,86 @@ func (r *inventoryRepo) SearchByName(ctx context.Context, chatID, keyword string
 		Limit(5).
 		Find(&items).Error
 	return items, err
+}
+
+// GetCategorySummary mengelompokkan inventory items ke kategori sederhana
+// untuk display yang hemat tokens di WhatsApp reply.
+// Kategorisasi berdasarkan keyword analysis pada item names.
+func (r *inventoryRepo) GetCategorySummary(ctx context.Context, chatID string) ([]CategorySummary, error) {
+	// Load all items for categorization
+	var items []domain.Inventory
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ?", chatID).
+		Order("item_name ASC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Simple categorization based on keywords
+	categories := map[string][]string{
+		"MINUMAN":       {"susu", "kopi", "teh", "air", "minuman", "jus", "soda"},
+		"SEMBAKO":       {"beras", "gula", "tepung", "mie", "bumbu", "minyak", "kacang", "cabe", "bawang"},
+		"MAKAN":         {"roti", "biskuit", "snack", "keripik", "wafer", "coklat"},
+		"HARI_HARI":     {"sabun", "detergent", "tissue", "plastik", "pembersih", "shampo", "pasta gigi"},
+		"POPUK":         {"popok", "diaper", "pampers"},
+		"LAINNYA":       {},
+	}
+
+	// Categorize items
+	categorized := make(map[string][]string)
+	for _, item := range items {
+		lowerName := strings.ToLower(item.ItemName)
+		itemCategorized := false
+
+		for category, keywords := range categories {
+			if category == "LAINNYA" {
+				continue // Skip "LAINNYA" for now
+			}
+
+			for _, keyword := range keywords {
+				if strings.Contains(lowerName, keyword) {
+					categorized[category] = append(categorized[category], item.ItemName)
+					itemCategorized = true
+					break
+				}
+			}
+
+			if itemCategorized {
+				break
+			}
+		}
+
+		// Kalau tidak match ke kategori manapun, masuk ke "LAINNYA"
+		if !itemCategorized {
+			categorized["LAINNYA"] = append(categorized["LAINNYA"], item.ItemName)
+		}
+	}
+
+	// Build summary
+	var summary []CategorySummary
+	for category, items := range categorized {
+		if len(items) == 0 {
+			continue
+		}
+
+		// Ambil contoh item pertama untuk display
+		example := items[0]
+		if len(example) > 20 {
+			example = example[:20] + "..."
+		}
+
+		summary = append(summary, CategorySummary{
+			Category: category,
+			Count:    int64(len(items)),
+			Example:  example,
+		})
+	}
+
+	// Sort by count (descending)
+	sort.Slice(summary, func(i, j int) bool {
+		return summary[i].Count > summary[j].Count
+	})
+
+	return summary, nil
 }

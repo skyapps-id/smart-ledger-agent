@@ -18,14 +18,23 @@ import (
 	"smart-ledger-agent/internal/domain"
 )
 
+// Usage merepresentasikan token usage dari LLM response.
+type Usage struct {
+	PromptTokens         int     `json:"prompt_tokens"`
+	CompletionTokens     int     `json:"completion_tokens"`
+	TotalTokens          int     `json:"total_tokens"`
+	PromptCacheHitTokens int     `json:"prompt_cache_hit_tokens,omitempty"`
+	CostUSD              float64 `json:"cost_usd"`
+}
+
 // Extractor abstraksi klien ekstraksi LLM.
 type Extractor interface {
-	Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, error)
+	Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, Usage, error)
 }
 
 // IntentExtractor abstraksi untuk intent classification menggunakan LLM.
 type IntentExtractor interface {
-	ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error)
+	ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, Usage, error)
 }
 
 // New membuat klien OpenRouter dengan HTTP client default.
@@ -104,15 +113,50 @@ type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens          int `json:"prompt_tokens"`
+		CompletionTokens      int `json:"completion_tokens"`
+		TotalTokens           int `json:"total_tokens"`
+		PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
+	} `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 }
 
+// calculateCost menghitung biaya LLM berdasarkan token usage dan DeepSeek pricing.
+// DeepSeek pricing (per 1M tokens):
+// - Input: $0.14 USD
+// - Cache hit: $0.014 USD (90% discount)
+// - Output: $0.28 USD
+func calculateCost(promptTokens, completionTokens, cacheHitTokens int) float64 {
+	const (
+		inputPricePerMillion  = 0.14  // $0.14 per 1M input tokens
+		cachePricePerMillion  = 0.014 // $0.014 per 1M cache hit tokens (90% discount)
+		outputPricePerMillion = 0.28  // $0.28 per 1M output tokens
+	)
+
+	// Calculate input cost (excluding cache hits)
+	regularInputTokens := promptTokens - cacheHitTokens
+	if regularInputTokens < 0 {
+		regularInputTokens = 0
+	}
+	inputCost := float64(regularInputTokens) / 1_000_000 * inputPricePerMillion
+
+	// Calculate cache hit cost (90% discount)
+	cacheCost := float64(cacheHitTokens) / 1_000_000 * cachePricePerMillion
+
+	// Calculate output cost
+	outputCost := float64(completionTokens) / 1_000_000 * outputPricePerMillion
+
+	totalCost := inputCost + cacheCost + outputCost
+	return totalCost
+}
+
 // Extract mengirim teks ke LLM dan mengembalikan entitas terstruktur.
 // inventoryContext adalah snapshot inventory chat (hasil BuildInventoryPrompt)
 // yang di-inject sebagai konteks tambahan ke system prompt.
-func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, error) {
+func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, Usage, error) {
 	systemPrompt := SystemPrompt
 	if inventoryContext != "" {
 		systemPrompt += inventoryContext
@@ -125,50 +169,61 @@ func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventor
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return domain.Extraction{}, fmt.Errorf("marshal request: %w", err)
+		return domain.Extraction{}, Usage{}, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return domain.Extraction{}, fmt.Errorf("buat request: %w", err)
+		return domain.Extraction{}, Usage{}, fmt.Errorf("buat request: %w", err)
 	}
 	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return domain.Extraction{}, &RequestError{Err: err}
+		return domain.Extraction{}, Usage{}, &RequestError{Err: err}
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return domain.Extraction{}, fmt.Errorf("baca response: %w", err)
+		return domain.Extraction{}, Usage{}, fmt.Errorf("baca response: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return domain.Extraction{}, ErrRateLimited
+		return domain.Extraction{}, Usage{}, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.Extraction{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return domain.Extraction{}, Usage{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 
 	var chat chatResponse
 	if err := json.Unmarshal(raw, &chat); err != nil {
-		return domain.Extraction{}, fmt.Errorf("decode response: %w", err)
+		return domain.Extraction{}, Usage{}, fmt.Errorf("decode response: %w", err)
 	}
 	if chat.Error != nil {
-		return domain.Extraction{}, errors.New(chat.Error.Message)
+		return domain.Extraction{}, Usage{}, errors.New(chat.Error.Message)
 	}
 	if len(chat.Choices) == 0 {
-		return domain.Extraction{}, errors.New("respons LLM kosong")
+		return domain.Extraction{}, Usage{}, errors.New("respons LLM kosong")
 	}
 
 	extraction, err := parseContent(chat.Choices[0].Message.Content)
 	if err != nil {
-		return domain.Extraction{}, fmt.Errorf("parsing JSON LLM: %w", err)
+		return domain.Extraction{}, Usage{}, fmt.Errorf("parsing JSON LLM: %w", err)
 	}
 	extraction.Normalise()
-	return extraction, nil
+
+	// Build usage info
+	usage := Usage{}
+	if chat.Usage != nil {
+		usage.PromptTokens = chat.Usage.PromptTokens
+		usage.CompletionTokens = chat.Usage.CompletionTokens
+		usage.TotalTokens = chat.Usage.TotalTokens
+		usage.PromptCacheHitTokens = chat.Usage.PromptCacheHitTokens
+		usage.CostUSD = calculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptCacheHitTokens)
+	}
+
+	return extraction, usage, nil
 }
 
 // parseContent membersihkan kemungkinan markdown lalu decode JSON.
@@ -182,7 +237,7 @@ func parseContent(content string) (domain.Extraction, error) {
 }
 
 // ClassifyIntent mengklasifikasikan intent pesan pengguna menggunakan LLM.
-func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, error) {
+func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, Usage, error) {
 	body := c.buildChatRequest([]chatMessage{
 		{Role: "system", Content: SystemPromptIntent},
 		{Role: "user", Content: "Klasifikasikan pesan ini: " + strings.TrimSpace(rawText)},
@@ -190,53 +245,63 @@ func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, s
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return domain.ServiceAction{}, fmt.Errorf("marshal request: %w", err)
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return domain.ServiceAction{}, fmt.Errorf("buat request: %w", err)
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("buat request: %w", err)
 	}
 	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return domain.ServiceAction{}, &RequestError{Err: err}
+		return domain.ServiceAction{}, Usage{}, &RequestError{Err: err}
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return domain.ServiceAction{}, fmt.Errorf("baca response: %w", err)
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("baca response: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return domain.ServiceAction{}, ErrRateLimited
+		return domain.ServiceAction{}, Usage{}, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.ServiceAction{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 
 	var chat chatResponse
 	if err := json.Unmarshal(raw, &chat); err != nil {
-		return domain.ServiceAction{}, fmt.Errorf("decode response: %w", err)
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("decode response: %w", err)
 	}
 	if chat.Error != nil {
-		return domain.ServiceAction{}, errors.New(chat.Error.Message)
+		return domain.ServiceAction{}, Usage{}, errors.New(chat.Error.Message)
 	}
 	if len(chat.Choices) == 0 {
-		return domain.ServiceAction{}, errors.New("respons LLM kosong")
+		return domain.ServiceAction{}, Usage{}, errors.New("respons LLM kosong")
 	}
 
 	action, err := parseIntentContent(chat.Choices[0].Message.Content)
 	if err != nil {
-		return domain.ServiceAction{}, fmt.Errorf("parsing JSON LLM: %w", err)
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("parsing JSON LLM: %w", err)
+	}
+
+	// Build usage info
+	usage := Usage{}
+	if chat.Usage != nil {
+		usage.PromptTokens = chat.Usage.PromptTokens
+		usage.CompletionTokens = chat.Usage.CompletionTokens
+		usage.TotalTokens = chat.Usage.TotalTokens
+		usage.PromptCacheHitTokens = chat.Usage.PromptCacheHitTokens
+		usage.CostUSD = calculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptCacheHitTokens)
 	}
 
 	// Log raw response untuk debugging param extraction
 	log.Printf("[LLM INTENT] raw=%s action=%s params=%v", truncate(chat.Choices[0].Message.Content, 300), action.Action, action.Params)
 
-	return action, nil
+	return action, usage, nil
 }
 
 // parseIntentContent membersihkan kemungkinan markdown lalu decode JSON untuk ServiceAction.

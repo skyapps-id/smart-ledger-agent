@@ -88,7 +88,7 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 	}
 
 	// LLM Intent Classification
-	action, err := a.intent.ClassifyIntent(ctx, msg.Text, msg.ChatID)
+	action, intentUsage, err := a.intent.ClassifyIntent(ctx, msg.Text, msg.ChatID)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal klasifikasi intent", "err", err)
 		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))
@@ -96,36 +96,39 @@ func (a *Agent) Process(ctx context.Context, msg entity.IncomingMessage) error {
 
 	a.log.InfoContext(ctx, "intent terklasifikasi", "action", action.Action, "params", action.Params)
 
+	// Track intent classification cost
+	intentCost := intentUsage.CostUSD
+
 	// Route berdasarkan action yang diklasifikasikan oleh LLM
 	switch action.Action {
 	case domain.ActionInit:
-		return a.handleInitAction(ctx, msg, chat, action.Params)
+		return a.handleInitAction(ctx, msg, chat, action.Params, intentCost)
 
 	case domain.ActionHelp:
-		return a.reply(ctx, msg.ChatID, OnboardingTemplate)
+		return a.replyWithCost(ctx, msg.ChatID, OnboardingTemplate, intentCost)
 
 	case domain.ActionInfo:
-		return a.handleInfo(ctx, msg, chat)
+		return a.handleInfo(ctx, msg, chat, intentCost)
 
 	case domain.ActionGetStock:
-		return a.handleGetStock(ctx, msg, chat, action.Params)
+		return a.handleGetStock(ctx, msg, chat, action.Params, intentCost)
 
 	case domain.ActionGetReport:
-		return a.handleGetReport(ctx, msg, chat, action.Params)
+		return a.handleGetReport(ctx, msg, chat, action.Params, intentCost)
 
 	case domain.ActionConsumption:
-		return a.handleConsumptionAction(ctx, msg, action.Params)
+		return a.handleConsumptionAction(ctx, msg, action.Params, intentCost)
 
 	case domain.ActionRecordTransaction:
-		return a.handleRecordTransaction(ctx, msg, chat)
+		return a.handleRecordTransaction(ctx, msg, chat, intentCost)
 
 	case domain.ActionNone:
 		a.log.InfoContext(ctx, "pesan tidak dikenali diabaikan", "text", msg.Text)
-		return a.reply(ctx, msg.ChatID, SmallTalkMessage)
+		return a.replyWithCost(ctx, msg.ChatID, SmallTalkMessage, intentCost)
 
 	default:
 		a.log.WarnContext(ctx, "action tidak dikenali", "action", action.Action)
-		return a.reply(ctx, msg.ChatID, "Maaf, gagal mengenali intent pesan.")
+		return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengenali intent pesan.", intentCost)
 	}
 }
 
@@ -458,7 +461,7 @@ func (a *Agent) handleConsumption(ctx context.Context, msg entity.IncomingMessag
 }
 
 // handleConsumptionAction menangani action konsumsi dari LLM.
-func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.IncomingMessage, params map[string]interface{}) error {
+func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.IncomingMessage, params map[string]interface{}, intentCost float64) error {
 	a.log.InfoContext(ctx, "handler: consumption", "params", params)
 	// Ambil parameter yang diperlukan
 	itemName, ok := params["item_name"].(string)
@@ -466,9 +469,9 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		// Jika tidak ada item_name specific, list semua active items
 		result, err := a.consumptionService.ListActiveItems(ctx, msg.ChatID)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err), intentCost)
 		}
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 	}
 
 	actionType, ok := params["consumption_action"].(string)
@@ -505,10 +508,10 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		if originalUnit != "" && originalQty > 0 {
 			// Untuk inventory: kurangi dalam pcs (usageQty dari LLM)
 			// Untuk consumption: simpan dalam satuan asli (originalQty dalam originalUnit)
-			err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, originalQty, originalUnit, usageDate)
+			err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, originalQty, originalUnit, usageDate, intentCost)
 			return err // handleUsageWithConsumption already sends reply
 		}
-		
+
 		// Fallback ke default behavior jika tidak ada satuan asli
 		conversionFactor, _ := params["conversion_factor"].(float64)
 		if usageUnit == "" {
@@ -519,7 +522,7 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		}
 
 		// Kurangi stok dan mulai consumption cycle dengan auto-generated batch
-		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, 0.0, "", usageDate)
+		err = a.handleUsageWithConsumption(ctx, msg, itemName, usageQty, usageUnit, 0.0, "", usageDate, intentCost)
 		return err // handleUsageWithConsumption already sends reply
 
 	case "update":
@@ -527,26 +530,26 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		batchNumber, _ := params["batch_number"].(string)
 		a.log.InfoContext(ctx, "consumption update", "item", itemName, "batch", batchNumber, "params", params)
 		if batchNumber == "" {
-			return a.reply(ctx, msg.ChatID, "Maaf, perlu sebut batch number untuk update konsumsi. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, perlu sebut batch number untuk update konsumsi. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"", intentCost)
 		}
-		
+
 		updateQty, ok := params["usage_qty"].(float64)
 		if !ok {
-			return a.reply(ctx, msg.ChatID, "Maaf, perlu sebut jumlah konsumsi untuk update. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, perlu sebut jumlah konsumsi untuk update. Contoh: \"terpakai susu uht 500ml (AUG-12-152714) 100ml\"", intentCost)
 		}
-		
+
 		updateUnit, _ := params["usage_unit"].(string)
 		if updateUnit == "" {
 			updateUnit = "ml" // default unit
 		}
-		
+
 		// Update consumption cycle
 		result, err = a.consumptionService.UpdateConsumption(ctx, msg.ChatID, itemName, batchNumber, updateQty, updateUnit)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal update konsumsi: %v", err))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal update konsumsi: %v", err), intentCost)
 		}
-		
-		return a.reply(ctx, msg.ChatID, result)
+
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 
 	case "complete", "finish":
 		// "habis" - selesaikan consumption cycle
@@ -554,16 +557,16 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		a.log.InfoContext(ctx, "consumption complete", "item", itemName, "batch", batchNumber)
 		result, err = a.consumptionService.CompleteUsage(ctx, msg.ChatID, itemName, batchNumber)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal menyelesaikan consumption: %v", err))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal menyelesaikan consumption: %v", err), intentCost)
 		}
 
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 
 	case "calculate":
 		// Menghitung konsumsi harian tanpa menyimpan cycle
 		purchaseQty, ok := params["purchase_qty"].(float64)
 		if !ok {
-			return a.reply(ctx, msg.ChatID, "Maaf, perlu specify jumlah pembelian (purchase_qty).")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, perlu specify jumlah pembelian (purchase_qty).", intentCost)
 		}
 
 		purchaseUnit, _ := params["purchase_unit"].(string)
@@ -578,30 +581,30 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 
 		purchaseDateStr, ok := params["purchase_date"].(string)
 		if !ok || purchaseDateStr == "" {
-			return a.reply(ctx, msg.ChatID, "Maaf, perlu specify tanggal pembelian (purchase_date).")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, perlu specify tanggal pembelian (purchase_date).", intentCost)
 		}
 
 		endDateStr, ok := params["end_date"].(string)
 		if !ok || endDateStr == "" {
-			return a.reply(ctx, msg.ChatID, "Maaf, perlu specify tanggal habis (end_date).")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, perlu specify tanggal habis (end_date).", intentCost)
 		}
 
 		purchaseDate, err := time.Parse("2006-01-02", purchaseDateStr)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, "Format tanggal purchase_date tidak valid (YYYY-MM-DD).")
+			return a.replyWithCost(ctx, msg.ChatID, "Format tanggal purchase_date tidak valid (YYYY-MM-DD).", intentCost)
 		}
 
 		endDate, err := time.Parse("2006-01-02", endDateStr)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, "Format tanggal end_date tidak valid (YYYY-MM-DD).")
+			return a.replyWithCost(ctx, msg.ChatID, "Format tanggal end_date tidak valid (YYYY-MM-DD).", intentCost)
 		}
 
 		result, err = a.consumptionService.CalculateDailyConsumption(ctx, msg.ChatID, itemName, purchaseDate, endDate, purchaseQty, purchaseUnit, conversionFactor)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal menghitung konsumsi: %v", err))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal menghitung konsumsi: %v", err), intentCost)
 		}
 
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 
 	case "history":
 		// Mendapatkan history konsumsi
@@ -612,10 +615,10 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 
 		result, err = a.consumptionService.GetHistory(ctx, msg.ChatID, itemName, limit)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil history: %v", err))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil history: %v", err), intentCost)
 		}
 
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 
 	case "info":
 		// Tampilkan info konsumsi aktif untuk item spesifik
@@ -623,18 +626,18 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, itemName, batchNumber)
 		if err != nil {
 			// Jika item tidak ditemukan, tarkan pesan yang lebih informatif
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Tidak ada consumption cycle aktif untuk '%s'. Ketik 'barang aktif' untuk melihat semua item yang sedang dikonsumsi.", itemName))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Tidak ada consumption cycle aktif untuk '%s'. Ketik 'barang aktif' untuk melihat semua item yang sedang dikonsumsi.", itemName), intentCost)
 		}
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 
 	case "list":
 		// List semua active items dengan batch numbers
 		result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
 		if err != nil {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err), intentCost)
 		}
 
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 
 	default:
 		// Default: coba info dulu, jika tidak ada maka list active items
@@ -644,28 +647,28 @@ func (a *Agent) handleConsumptionAction(ctx context.Context, msg entity.Incoming
 			// Jika tidak ada spesifik item, list semua active items
 			result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
 			if err != nil {
-				return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err))
+				return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err), intentCost)
 			}
-			return a.reply(ctx, msg.ChatID, result)
+			return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 		}
-		return a.reply(ctx, msg.ChatID, result)
+		return a.replyWithCost(ctx, msg.ChatID, result, intentCost)
 	}
 }
 
 // handleUsageWithConsumption menangani "pakai" action: kurangi stok + mulai consumption cycle.
-func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, originalQty float64, originalUnit string, usageDate string) error {
+func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.IncomingMessage, itemName string, usageQty float64, usageUnit string, originalQty float64, originalUnit string, usageDate string, intentCost float64) error {
 	// Cek inventory item dulu
 	inv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return a.reply(ctx, msg.ChatID, fmt.Sprintf("Barang '%s' belum ada di inventaris. Beli dulu ya!", itemName))
+			return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Barang '%s' belum ada di inventaris. Beli dulu ya!", itemName), intentCost)
 		}
-		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal cek inventaris: %v", err))
+		return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal cek inventaris: %v", err), intentCost)
 	}
 
 	// Validasi stok cukup
 	if inv.StockQty < usageQty {
-		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Stok %s tidak cukup! Sisa: %.1f %s", itemName, inv.StockQty, inv.Unit))
+		return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Stok %s tidak cukup! Sisa: %.1f %s", itemName, inv.StockQty, inv.Unit), intentCost)
 	}
 
 	// Tentukan conversion factor dan unit untuk consumption tracking
@@ -716,7 +719,7 @@ func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.Incom
 
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal handle usage dengan consumption", "err", err)
-		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Gagal mulai pemakaian: %v", err))
+		return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Gagal mulai pemakaian: %v", err), intentCost)
 	}
 
 	// Invalidate cache
@@ -725,16 +728,16 @@ func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.Incom
 	// Get updated stock dan active cycle untuk batch info
 	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
 	if err != nil {
-		return a.reply(ctx, msg.ChatID, fmt.Sprintf("🔄 Pemakaian %s %.1f %s dicatat. Consumption cycle dimulai dengan auto-generated batch!", itemName, usageQty, usageUnit))
+		return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("🔄 Pemakaian %s %.1f %s dicatat. Consumption cycle dimulai dengan auto-generated batch!", itemName, usageQty, usageUnit), intentCost)
 	}
 
 	// Get cycle info untuk menampilkan batch number
 	cycle, err := a.consumptionService.cycleRepo.GetActiveByItem(ctx, msg.ChatID, itemName)
 	if err != nil {
-		return a.reply(ctx, msg.ChatID, fmt.Sprintf(
+		return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf(
 			"🔄 Pemakaian %s %.1f %s dicatat.\n✅ Consumption cycle: OPEN\n📦 Sisa stok: %.1f %s",
 			itemName, usageQty, usageUnit, updatedInv.StockQty, updatedInv.Unit,
-		))
+		), intentCost)
 	}
 
 	batchInfo := ""
@@ -742,10 +745,10 @@ func (a *Agent) handleUsageWithConsumption(ctx context.Context, msg entity.Incom
 		batchInfo = fmt.Sprintf(" (%s)", cycle.BatchNumber)
 	}
 
-	return a.reply(ctx, msg.ChatID, fmt.Sprintf(
+	return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf(
 		"🔄 Pemakaian %s%s %.1f %s dicatat.\n✅ Consumption cycle: OPEN\n📦 Sisa stok: %.1f %s",
 		itemName, batchInfo, usageQty, usageUnit, updatedInv.StockQty, updatedInv.Unit,
-	))
+	), intentCost)
 }
 
 // initReply memilih template konfirmasi init sesuai ada/tidak-nya nama ledger.
@@ -759,7 +762,7 @@ func initReply(name string) string {
 // ── LLM-based Action Handlers ──
 
 // handleInitAction menangani action init (aktivasi ledger).
-func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}, intentCost float64) error {
 	a.log.InfoContext(ctx, "handler: init", "params", params)
 	// Extract ledger name dari params
 	var ledgerName string
@@ -772,7 +775,7 @@ func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage
 			a.log.ErrorContext(ctx, "gagal mark init", "err", err)
 		}
 		a.log.InfoContext(ctx, "chat melakukan init", "chat", msg.ChatID, "name", ledgerName)
-		return a.reply(ctx, msg.ChatID, initReply(ledgerName))
+		return a.replyWithCost(ctx, msg.ChatID, initReply(ledgerName), intentCost)
 	}
 
 	// Sudah init: update nama bila diberikan, kalau tidak cukup balas status.
@@ -781,16 +784,16 @@ func (a *Agent) handleInitAction(ctx context.Context, msg entity.IncomingMessage
 			a.log.ErrorContext(ctx, "gagal rename ledger", "err", err)
 		}
 		a.log.InfoContext(ctx, "ledger di-rename", "chat", msg.ChatID, "name", ledgerName)
-		return a.reply(ctx, msg.ChatID, fmt.Sprintf("Nama ledger diperbarui: %s", ledgerName))
+		return a.replyWithCost(ctx, msg.ChatID, fmt.Sprintf("Nama ledger diperbarui: %s", ledgerName), intentCost)
 	}
-	return a.reply(ctx, msg.ChatID, "Akun sudah aktif. Ketik \"bantuan\" untuk format.")
+	return a.replyWithCost(ctx, msg.ChatID, "Akun sudah aktif. Ketik \"bantuan\" untuk format.", intentCost)
 }
 
 // handleGetStock menangani action get_stock (query stok/inventory).
-func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}, intentCost float64) error {
 	a.log.InfoContext(ctx, "handler: get_stock", "params", params)
 	if !chat.Initialized {
-		return a.reply(ctx, msg.ChatID, PreInitMessage)
+		return a.replyWithCost(ctx, msg.ChatID, PreInitMessage, intentCost)
 	}
 
 	// Extract item filter dari params
@@ -807,7 +810,7 @@ func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, 
 		items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
 		}
 		// Filter items yang match dengan itemFilter
 		filteredItems := make([]domain.Inventory, 0)
@@ -822,18 +825,18 @@ func (a *Agent) handleGetStock(ctx context.Context, msg entity.IncomingMessage, 
 		items, err = a.invRepo.WithTx(a.db).ListByChat(ctx, msg.ChatID)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal query stok", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
 		}
 	}
 
-	return a.reply(ctx, msg.ChatID, formatStock(items, itemFilter))
+	return a.replyWithCost(ctx, msg.ChatID, formatStock(items, itemFilter), intentCost)
 }
 
 // handleGetReport menangani action get_report (query laporan).
-func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}) error {
+func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, params map[string]interface{}, intentCost float64) error {
 	a.log.InfoContext(ctx, "handler: get_report", "params", params)
 	if !chat.Initialized {
-		return a.reply(ctx, msg.ChatID, PreInitMessage)
+		return a.replyWithCost(ctx, msg.ChatID, PreInitMessage, intentCost)
 	}
 
 	// Extract parameters dari params
@@ -861,14 +864,14 @@ func (a *Agent) handleGetReport(ctx context.Context, msg entity.IncomingMessage,
 		Params: params,
 	}
 
-	return a.generateReport(ctx, msg, action, reportType, period, itemFilter, customDateRange)
+	return a.generateReport(ctx, msg, action, reportType, period, itemFilter, customDateRange, intentCost)
 }
 
 // handleRecordTransaction menangani action record_transaction (pencatatan transaksi).
-func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat) error {
+func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, intentCost float64) error {
 	a.log.InfoContext(ctx, "handler: record_transaction")
 	if !chat.Initialized {
-		return a.reply(ctx, msg.ChatID, PreInitMessage)
+		return a.replyWithCost(ctx, msg.ChatID, PreInitMessage, intentCost)
 	}
 
 	// Path pencatatan: ekstraksi LLM -> persist.
@@ -876,28 +879,28 @@ func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.Incoming
 	// ke item yang sudah ada di inventory chat ini.
 	items := a.cachedInventory(ctx, msg.ChatID)
 	invContext := llm.BuildInventoryPrompt(items)
-	ext, err := a.llm.Extract(ctx, msg.Text, invContext, msg.ChatID)
+	ext, usage, err := a.llm.Extract(ctx, msg.Text, invContext, msg.ChatID)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
-		return a.reply(ctx, msg.ChatID, llmErrorMessage(err))
+		return a.replyWithCost(ctx, msg.ChatID, llmErrorMessage(err), intentCost)
 	}
 
 	// Pesan non-transaksi (sapaan/chitchat): jangan dicatat, balas ramah.
 	if ext.Type == domain.ExtractionNone {
 		a.log.InfoContext(ctx, "pesan non-transaksi diabaikan", "text", msg.Text)
-		return a.reply(ctx, msg.ChatID, SmallTalkMessage)
+		return a.replyWithCost(ctx, msg.ChatID, SmallTalkMessage, intentCost+usage.CostUSD)
 	}
 
 	reply, err := a.persist(ctx, msg, ext)
 	if err != nil {
 		var be *businessError
 		if errors.As(err, &be) {
-			return a.reply(ctx, msg.ChatID, be.msg)
+			return a.replyWithCost(ctx, msg.ChatID, be.msg, intentCost+usage.CostUSD)
 		}
 		a.log.ErrorContext(ctx, "gagal persistensi", "err", err, "type", ext.Type)
-		return a.reply(ctx, msg.ChatID, "Maaf, terjadi kendala saat mencatat. Coba lagi nanti.")
+		return a.replyWithCost(ctx, msg.ChatID, "Maaf, terjadi kendala saat mencatat. Coba lagi nanti.", intentCost+usage.CostUSD)
 	}
-	return a.reply(ctx, msg.ChatID, reply)
+	return a.replyWithCost(ctx, msg.ChatID, reply, intentCost+usage.CostUSD)
 }
 
 // cachedInventory mengembalikan snapshot inventory chat dari cache (TTL 5m)
@@ -918,7 +921,7 @@ func (a *Agent) cachedInventory(ctx context.Context, chatID string) []domain.Inv
 
 // handleInfo merangkai pesan metadata sesi/chat untuk diagnostic.
 // Selalu tersedia (pre-init maupun post-init).
-func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat) error {
+func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, chat *domain.Chat, intentCost float64) error {
 	count, err := a.txnRepo.WithTx(a.db).CountByChat(ctx, msg.ChatID)
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal query count transaksi", "err", err)
@@ -956,11 +959,11 @@ func (a *Agent) handleInfo(ctx context.Context, msg entity.IncomingMessage, chat
 	fmt.Fprintf(&b, "Bot ID    : %s\n", msg.BotID)
 	fmt.Fprintf(&b, "Bot LID   : %s\n", msg.BotLid)
 	fmt.Fprintf(&b, "Transaksi : %s\n", countStr)
-	return a.reply(ctx, msg.ChatID, b.String())
+	return a.replyWithCost(ctx, msg.ChatID, b.String(), intentCost)
 }
 
 // generateReport membuat laporan berdasarkan parameter yang diekstrak oleh LLM.
-func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, action domain.ServiceAction, reportType, periodType, itemFilter, customDateRange string) error {
+func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, action domain.ServiceAction, reportType, periodType, itemFilter, customDateRange string, intentCost float64) error {
 	// Parse period ke time range
 	var from, to time.Time
 	now := time.Now()
@@ -1037,7 +1040,7 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 		summary, err := a.txnRepo.WithTx(a.db).Summary(ctx, msg.ChatID, from, to)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal query ringkasan", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.", intentCost)
 		}
 
 		// Convert reportType to metric
@@ -1053,30 +1056,30 @@ func (a *Agent) generateReport(ctx context.Context, msg entity.IncomingMessage, 
 
 		periodLabel := formatPeriodLabel(periodType, from, to)
 		periodStruct := period{from: from, to: to, label: periodLabel}
-		return a.reply(ctx, msg.ChatID, formatTxnReport(metric, periodStruct, summary))
+		return a.replyWithCost(ctx, msg.ChatID, formatTxnReport(metric, periodStruct, summary), intentCost)
 
 	case "expense_by_item":
 		items, err := a.txnRepo.WithTx(a.db).ExpenseByItem(ctx, msg.ChatID, from, to)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal query per item", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.", intentCost)
 		}
 		periodLabel := formatPeriodLabel(periodType, from, to)
 		periodStruct := period{from: from, to: to, label: periodLabel}
-		return a.reply(ctx, msg.ChatID, formatExpenseByItem(periodStruct, items))
+		return a.replyWithCost(ctx, msg.ChatID, formatExpenseByItem(periodStruct, items), intentCost)
 
 	case "consumption":
 		moves, err := a.logRepo.WithTx(a.db).MovementsByChat(ctx, msg.ChatID, from, to)
 		if err != nil {
 			a.log.ErrorContext(ctx, "gagal query pemakaian", "err", err)
-			return a.reply(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.")
+			return a.replyWithCost(ctx, msg.ChatID, "Maaf, gagal mengambil laporan.", intentCost)
 		}
 		periodLabel := formatPeriodLabel(periodType, from, to)
 		periodStruct := period{from: from, to: to, label: periodLabel}
-		return a.reply(ctx, msg.ChatID, formatConsumption(periodStruct, moves))
+		return a.replyWithCost(ctx, msg.ChatID, formatConsumption(periodStruct, moves), intentCost)
 
 	default:
-		return a.reply(ctx, msg.ChatID, "Maaf, tipe laporan tidak dikenali.")
+		return a.replyWithCost(ctx, msg.ChatID, "Maaf, tipe laporan tidak dikenali.", intentCost)
 	}
 }
 
@@ -1167,6 +1170,30 @@ func (a *Agent) reply(ctx context.Context, chatID, text string) error {
 		preview = text[:50] + "..."
 	}
 	a.log.InfoContext(ctx, "balasan di-enqueue ke waha sender", "chat", chatID, "preview", preview)
+	return nil
+}
+
+// replyWithCost mengirim pesan dengan menambahkan biaya LLM di akhir pesan.
+func (a *Agent) replyWithCost(ctx context.Context, chatID, text string, totalCost float64) error {
+	// Format cost to 6 decimal places (microdollar precision)
+	costText := fmt.Sprintf("\n\n💰 AI cost: $%.6f", totalCost)
+	finalText := text + costText
+
+	msg := sender.Message{
+		ChatID: chatID,
+		Text:   finalText,
+	}
+
+	if !a.sender.Enqueue(msg) {
+		a.log.ErrorContext(ctx, "gagal meng-enqueue balasan", "chat", chatID)
+		return fmt.Errorf("gagal meng-enqueue balasan ke waha sender")
+	}
+
+	preview := text
+	if len(text) > 50 {
+		preview = text[:50] + "..."
+	}
+	a.log.InfoContext(ctx, "balasan di-enqueue ke waha sender", "chat", chatID, "preview", preview, "cost", totalCost)
 	return nil
 }
 

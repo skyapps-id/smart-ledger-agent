@@ -364,6 +364,7 @@ konsumsi                                    # → Shows all active consumption c
 konsumsi list                               # → Same as above (explicit)
 konsumsi susu uht 500ml                     # → Shows consumption info for specific item
 pakai susu uht 500ml                        # → Record usage, start new cycle
+pakai susu uht 500ml 05/08                  # → Record usage with custom date (DD/MM or DD/MM/YYYY)
 terpakai susu uht 500ml (AUG-12-152714) 100ml  # → Correct consumed amount for a batch
 susu uht 500ml sudah habis                  # → Complete consumption cycle with analytics
 barang aktif                                # → Lists all items currently being consumed

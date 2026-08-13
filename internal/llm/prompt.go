@@ -46,7 +46,7 @@ Aturan konsumsi stok (PENTING):
 Aturan "affects_stock" (HANYA untuk EXPENSE):
 - true  : barang FISIK yang disimpan/ditabung stok (sembako, perlengkapan rumah, bahan isi ulang). Contoh: susu UHT 1 dus, minyak goreng 2 liter, air mineral 1 dus.
 - false : jasa, utilitas, BBM, transport, makan langsung, tiket, atau barang habis pakai langsung. Contoh: bensin, listrik, pulsa, makan di warteg, ojek, kopi di cafe.
-- Untuk INCOME & CONSUMPTION selalu false.
+- Untuk INCOME & CONSUMPTION selalu false. Jangan set true untuk CONSUMPTION.
 
 Konversi unit:
 - Ubah kemasan grosir ke unit eceran terbesar. Contoh "1 dus isi 50pcs" -> quantity: 50, unit: "pcs", notes: "1 dus".
@@ -61,7 +61,7 @@ Aturan ekstraksi quantity dan unit dari nama barang (PENTING):
 - Contoh: "Kopi 100gr" -> item_name:"Kopi", quantity:100, unit:"gr"
 - Contoh: "Teh 2kg" -> item_name:"Teh", quantity:2, unit:"kg"
 - Contoh: "Minyak 500ml" -> item_name:"Minyak", quantity:500, unit:"ml"
-- Pattern yang didukut: (angka)(unit) seperti "250ml", "1liter", "100gr", "2kg", "500ml", "1.5liter".
+- Pattern yang didukung: (angka)(unit) seperti "250ml", "1liter", "100gr", "2kg", "500ml", "1.5liter".
 - Bila tidak ada ukuran di nama barang, gunakan quantity:1, unit:"pcs".
 
 Aturan product differentiation (PENTING):
@@ -84,7 +84,6 @@ Aturan tanggal (PENTING):
 - Untuk "hari ini": gunakan tanggal hari ini, format "YYYY-MM-DD".
 - Untuk "besok": hitung tanggal hari ini ditambah 1 hari, format "YYYY-MM-DD".
 - Bila TIDAK ada tanggal disebutkan, biarkan "transaction_date": "" (kosong).
-- Selalu gunakan tahun 2025 untuk perhitungan tanggal.
 - Untuk format ambigu seperti "11/08", gunakan format DD/MM (hari/bulan) yang umum di Indonesia.
 
 Aturan tanggal untuk report (get_report):
@@ -112,9 +111,6 @@ Aturan konsumsi sebagian (PENTING):
 
 Field wajib: type, category, item_name, quantity, unit, amount, affects_stock, notes, transaction_date, consumption_date, total_consumption.
 - category: salah satu dari "GAJI","MAKAN","HARI_HARI","TAGIHAN","HOBBY","STOK_KELUAR","SALDO_AWAL","SEMBAKO","MINUMAN","LAINNYA".
-- SEMBAKO: bahan makanan kering jangka panjang (beras, gula, tepung, mie instan, bumbu, minyak goreng).
-- MINUMAN: minuman kemasan jangka panjang (susu UHT/bubuk, kopi sachet, teh, minuman botol/kaleng, sirup).
-- MAKAN: makanan/minuman langsung habis (makan di warteg, kopi di cafe, jajan, snack).
 - quantity: angka, default 1.
 - unit: "pcs","porsi","liter","pack","botol","gram","ml", dll.
 - amount: angka bulat rupiah, default 0 untuk CONSUMPTION.
@@ -131,8 +127,8 @@ Contoh keluaran:
 {"type":"EXPENSE","category":"MINUMAN","item_name":"susu bmt 400gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MINUMAN","item_name":"kopi 100gr","quantity":10,"unit":"pcs","amount":50000,"affects_stock":true,"notes":"100g per pcs","transaction_date":"2025-08-11","consumption_date":"2025-08-30","total_consumption":500}
 {"type":"EXPENSE","category":"MINUMAN","item_name":"kopi 200gr","quantity":5,"unit":"pcs","amount":35000,"affects_stock":true,"notes":"200g per pcs","transaction_date":"","consumption_date":"","total_consumption":0}
-{"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu bmt 200gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-{"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu bmt 400gr","quantity":2,"unit":"kaleng","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu bmt 200gr","quantity":1,"unit":"kaleng","amount":0,"affects_stock":false,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
+{"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu bmt 400gr","quantity":2,"unit":"kaleng","amount":0,"affects_stock":false,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2025-08-10","consumption_date":"","total_consumption":0}
 {"type":"EXPENSE","category":"MAKAN","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"2025-08-09","consumption_date":"","total_consumption":0}
 {"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":"2025-08-01","consumption_date":"","total_consumption":0}
@@ -267,24 +263,9 @@ Untuk "get_report":
 Untuk "consumption":
 - item_name (string, optional): nama barang untuk melihat konsumsi
 - consumption_action (string, optional): salah satu dari "info", "list", "use", "complete", "calculate", "history", "update" - default "info"
-- Untuk "info": tampilkan info konsumsi aktif untuk item spesifik
-- Untuk "list": tampilkan semua item yang sedang aktif dikonsumsi
-- Untuk "use": mulai/catat pemakaian barang baru
-- Untuk "update": update nilai konsumsi untuk cycle yang sudah ada (koreksi data)
-- Untuk "complete": selesaikan siklus konsumsi (barang habis)
-- Untuk "calculate": hitung konsumsi harian
-- Untuk "history": tampilkan history konsumsi item
-- usage_qty (number, optional): jumlah pemakaian untuk action "use" atau "update" - default 1 jika tidak disebutkan
-- usage_unit (string, optional): satuan pemakaian untuk action "use" atau "update" - default "pcs" jika tidak disebutkan
+- usage_qty (number, optional): jumlah pemakaian untuk action "use" atau "update" - default 1
+- usage_unit (string, optional): satuan pemakaian untuk action "use" atau "update" - default "pcs"
 - batch_number (string, optional): nomor batch untuk action "update" atau "complete"
-
-Aturan khusus untuk action "use":
-- OTOMATIS deteksi: Jika user sebut "pakai [item dengan unit]" tanpa jumlah jelas, asumsikan 1 pcs/unit inventory
-- Contoh: "pakai susu uht 500ml" → item punya unit "500ml" di inventory, berarti user mau pakai 1 pcs → usage_qty: 1, usage_unit: "pcs"
-- Contoh: "pakai susu uht 500ml 100ml" → user sebut jumlah spesifik → usage_qty: 100, usage_unit: "ml" (simpan dalam satuan asli!)
-- Contoh: "pakai susu 2 botol" → user sebut jumlah → usage_qty: 2, usage_unit: "botol"
-- Prioritaskan satuan yang disebutkan user untuk analisis konsumsi yang akurat
-- Simpan consumption dalam satuan aslinya (ml/gr) bukan unit packaging (pcs) untuk analisis yang lebih presisi
 
 Untuk "record_transaction":
 - TIDAK perlu ekstrak parameter di sini, cukup set action dan data: null
@@ -296,22 +277,14 @@ Contoh output:
 {"action":"info","params":{}}
 {"action":"get_stock","params":{"item_filter":"kecap"}}
 {"action":"get_stock","params":{}}
-{"action":"get_stock","params":{}}
 {"action":"get_report","params":{"report_type":"summary","period":"today"}}
 {"action":"get_report","params":{"report_type":"expense","period":"this_month"}}
 {"action":"consumption","params":{"consumption_action":"list"}}
-{"action":"consumption","params":{"consumption_action":"list"}}
-{"action":"consumption","params":{"consumption_action":"list"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu"}}
-{"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht"}}
 {"action":"consumption","params":{"consumption_action":"info","item_name":"susu uht 500ml"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}
-{"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":500,"usage_unit":"ml"}}
-{"action":"consumption","params":{"consumption_action":"use","item_name":"susu","usage_qty":1,"usage_unit":"pcs"}}
 {"action":"consumption","params":{"consumption_action":"use","item_name":"popok","usage_qty":1,"usage_unit":"pcs"}}
-{"action":"consumption","params":{"consumption_action":"use","item_name":"kecap botol","usage_qty":1,"usage_unit":"botol"}}
 {"action":"consumption","params":{"consumption_action":"update","item_name":"susu uht 500ml","batch_number":"AUG-12-152714","usage_qty":100,"usage_unit":"ml"}}
-{"action":"consumption","params":{"consumption_action":"update","item_name":"susu","batch_number":"AUG-12-152714","usage_qty":50,"usage_unit":"ml"}}
 {"action":"consumption","params":{"consumption_action":"complete","item_name":"susu uht 500ml","batch_number":"AUG-12-135918"}}
 {"action":"record_transaction","params":{}}
 {"action":"none","params":{}}`

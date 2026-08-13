@@ -305,59 +305,6 @@ cek sisa susu di rumah          # natural language query
 
 ---
 
-## 🧪 Testing & Validation
-
-The LLM-based routing architecture is fully tested with automated test coverage:
-
-### Test Results
-```bash
-✅ 15/15 test cases PASSED
-✅ Intent classification: 100% accurate
-✅ Parameter extraction: 100% correct
-✅ Response formatting: Working as expected
-✅ Full flow simulation: Success
-✅ Consumption module: Multi-batch tracking working
-✅ Unit detection: Smart ml/gr classification working
-```
-
-### Test Coverage
-- **Intent Classification**: 10+ query patterns tested
-- **Parameter Extraction**: Edge cases and variations covered
-- **Response Formatting**: Stock queries validated
-- **Full Flow Simulation**: End-to-end testing confirmed
-- **Consumption Tracking**: Multi-batch scenarios, unit detection, completion flows
-- **Consumption Analysis**: Rate calculation, history tracking, active cycle management
-
-### Running Tests
-```bash
-go test -v ./internal/service    # Run all service tests
-go test -v ./internal/service -run TestGetStock    # Stock query tests
-go test -v ./internal/service -run TestFullStockQueryFlow    # Full flow test
-```
-
-### Example Test Output
-```
-=== RUN   TestFullStockQueryFlow
-    agent_llm_test.go:153: 🔄 Simulasi Full Flow untuk query: 'cek stock kecap'
-    agent_llm_test.go:158: 👤 User Query: 'cek stock kecap'
-    agent_llm_test.go:161: 🤖 Step 1: LLM Intent Classification
-    agent_llm_test.go:170:    ✅ Action: get_stock
-    agent_llm_test.go:171:    ✅ Params: map[item_filter:kecap]
-    agent_llm_test.go:174: 🔀 Step 2: Agent Routing
-    agent_llm_test.go:178:    ✅ Routed to: handleGetStock()
-    agent_llm_test.go:182: 📊 Step 3: Parameter Extraction
-    agent_llm_test.go:185:    ✅ Item Filter: 'kecap'
-    agent_llm_test.go:191: 📝 Step 4: Response Formatting
-    agent_llm_test.go:198:    ✅ Response Generated:
-    agent_llm_test.go:200:       Stok saat ini (kecap):
-        - Kecap Manis: 5 botol
-        - Kecap Asin: 3 botol
-    agent_llm_test.go:204: 🎉 Full Flow Test PASSED!
---- PASS: TestFullStockQueryFlow (0.00s)
-```
-
----
-
 ## ⚙️ Configuration (`.env`)
 
 | Variable | Required | Default | Description |

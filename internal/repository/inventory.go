@@ -20,6 +20,7 @@ type InventoryRepository interface {
 	AddStock(ctx context.Context, chatID, itemName string, qty float64, unit string) (*domain.Inventory, error)
 	DecreaseStock(ctx context.Context, id int64, qty float64) error
 	ListByChat(ctx context.Context, chatID string) ([]domain.Inventory, error)
+	SearchByName(ctx context.Context, chatID, keyword string) ([]domain.Inventory, error)
 }
 
 type inventoryRepo struct{ db *gorm.DB }
@@ -96,6 +97,18 @@ func (r *inventoryRepo) ListByChat(ctx context.Context, chatID string) ([]domain
 	err := r.db.WithContext(ctx).
 		Where("chat_id = ?", chatID).
 		Order("item_name ASC").
+		Find(&items).Error
+	return items, err
+}
+
+// SearchByName mencari inventory items berdasarkan keyword menggunakan ILIKE.
+// Maksimal 5 hasil untuk menghemat tokens di LLM context.
+func (r *inventoryRepo) SearchByName(ctx context.Context, chatID, keyword string) ([]domain.Inventory, error) {
+	var items []domain.Inventory
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ? AND item_name ILIKE ?", chatID, "%"+keyword+"%").
+		Order("item_name ASC").
+		Limit(5).
 		Find(&items).Error
 	return items, err
 }

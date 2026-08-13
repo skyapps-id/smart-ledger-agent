@@ -875,9 +875,9 @@ func (a *Agent) handleRecordTransaction(ctx context.Context, msg entity.Incoming
 	}
 
 	// Path pencatatan: ekstraksi LLM -> persist.
-	// Sertakan snapshot inventory (pakai cache) agar LLM meresolve nama barang
+	// Sertakan snapshot inventory (pakai search optimization) agar LLM meresolve nama barang
 	// ke item yang sudah ada di inventory chat ini.
-	items := a.cachedInventory(ctx, msg.ChatID)
+	items := a.searchInventory(ctx, msg.ChatID, msg.Text)
 	invContext := llm.BuildInventoryPrompt(items)
 	ext, usage, err := a.llm.Extract(ctx, msg.Text, invContext, msg.ChatID)
 	if err != nil {
@@ -916,6 +916,79 @@ func (a *Agent) cachedInventory(ctx context.Context, chatID string) []domain.Inv
 		return nil
 	}
 	a.invCache.Set(chatID, items, cache.DefaultExpiration)
+	return items
+}
+
+// extractKeywords mengambil keywords dari pesan user untuk inventory search.
+// Focus pada kata-kata yang kemungkinan adalah nama barang/produk.
+func (a *Agent) extractKeywords(userMessage string) []string {
+	words := strings.Fields(strings.ToLower(userMessage))
+	keywords := []string{}
+
+	// Indonesian stopwords + action words yang tidak relevan untuk inventory search
+	stopwords := map[string]bool{
+		// Stopwords umum
+		"yang": true, "dan": true, "atau": true, "ada": true, "dari": true,
+		"ke": true, "di": true, "untuk": true, "dengan": true, "pada": true,
+		"adalah": true, "itu": true, "ini": true, "berapa": true, "sisa": true,
+		// Query words
+		"cek": true, "stok": true, "stock": true, "barang": true, "item": true,
+		"persediaan": true, "punya": true, "punyai": true, "milik": true,
+		// Action words (transactions)
+		"beli": true, "bayar": true, "ambil": true, "pakai": true, "terpakai": true,
+		"jual": true, "transfer": true, "masuk": true, "keluar": true,
+		// Numbers and quantities (biasanya bukan nama barang)
+		"rb": true, "ribu": true, "jt": true, "juta": true, "k": true, "pcs": true,
+	}
+
+	// Skip common query patterns yang jelas general
+	generalPatterns := []string{"barang saya", "apa aja", "apa saja", "semua", "list", "daftar", "inventaris"}
+	lowerMsg := strings.ToLower(userMessage)
+	for _, pattern := range generalPatterns {
+		if strings.Contains(lowerMsg, pattern) {
+			return []string{} // Return empty untuk trigger fallback ke full inventory
+		}
+	}
+
+	for _, word := range words {
+		// Skip stopwords, action words, dan kata pendek
+		if !stopwords[word] && len(word) > 2 && !strings.HasPrefix(word, "http") {
+			// Skip angka murni
+			if _, err := strconv.Atoi(word); err != nil {
+				keywords = append(keywords, word)
+			}
+		}
+	}
+
+	return keywords
+}
+
+// searchInventory mencari inventory items berdasarkan keywords dari pesan user.
+// Returns: relevant items (1-5 items) untuk efisiensi LLM tokens.
+func (a *Agent) searchInventory(ctx context.Context, chatID, userMessage string) []domain.Inventory {
+	keywords := a.extractKeywords(userMessage)
+	
+	// Kalau tidak ada keywords extracted atau general query, fallback ke full inventory
+	if len(keywords) == 0 {
+		a.log.DebugContext(ctx, "general query detected, using full inventory", "chat", chatID)
+		return a.cachedInventory(ctx, chatID)
+	}
+
+	// Cari dengan keyword pertama (paling relevant)
+	keyword := keywords[0]
+	items, err := a.invRepo.WithTx(a.db).SearchByName(ctx, chatID, keyword)
+	if err != nil {
+		a.log.ErrorContext(ctx, "search inventory error, fallback to full", "keyword", keyword, "err", err)
+		return a.cachedInventory(ctx, chatID)
+	}
+
+	// Kalau search tidak return hasil apa-apa, fallback ke full inventory
+	if len(items) == 0 {
+		a.log.DebugContext(ctx, "no search results, fallback to full inventory", "keyword", keyword)
+		return a.cachedInventory(ctx, chatID)
+	}
+
+	a.log.DebugContext(ctx, "search inventory success", "keyword", keyword, "found", len(items), "items", len(items))
 	return items
 }
 

@@ -192,6 +192,9 @@ Tugas: klasifikasikan pesan pengguna menjadi SATU action dan ekstrak parameter y
 
 Hanya kembalikan JSON valid (TANPA markdown, TANPA teks tambahan).
 
+PENTING: params WAJIB diisi berdasarkan action yang dipilih. JANGAN kembalikan params kosong {}.
+Setiap action punya parameter wajib yang harus diekstrak dari pesan user.
+
 Action types yang tersedia:
 1. "init" - aktivasi/initialisasi ledger (contoh: "init", "mulai", "start", "daftar", "aktivasi")
 2. "help" - permintaan bantuan/panduan (contoh: "bantuan", "bantu", "panduan", "menu", "format", "help")
@@ -216,6 +219,8 @@ Action types yang tersedia:
 9. Sapaan/chitchat/tidak jelas -> "none".
 
 ATURAN KHUSUS: Kata "pakai" SELALU = consumption dengan action "use"
+- WAJIB isi: consumption_action="use", item_name=[barang], usage_qty=[jumlah], usage_unit=[satuan]
+- JANGAN kembalikan params kosong untuk kata "pakai"!
 - "pakai [barang]" → consumption, action: "use", item_name: [barang], usage_qty: 1, usage_unit: "pcs"
 - "pakai [barang] [jumlah] [satuan]" → consumption, action: "use", item_name: [barang], usage_qty: [jumlah], usage_unit: [satuan]
 - Contoh: "pakai susu uht 500ml" → {"action":"consumption","params":{"consumption_action":"use","item_name":"susu uht 500ml","usage_qty":1,"usage_unit":"pcs"}}

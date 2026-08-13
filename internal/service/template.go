@@ -23,11 +23,6 @@ PEMAKAIAN STOK:
 > Konsumsi list (lihat barang aktif)
 > Terpakai susu uht 500ml (AUG-12-152714) 100ml (koreksi data konsumsi)
 
-ANALISA KONSUMSI (ADVANCED):
-> Kopi 100g beli 10pcs tanggal 11/08 tapi habis 500g di 30/08
-> Susu 200ml beli 12 botol tanggal 01/08 habis 1 liter di 20/08
-> Beras 5kg beli 2 karung tanggal 05/08 habis 3kg di 25/08
-
 LAPORAN (tanya aja):
 > Pengeluaran hari ini berapa?
 > Total pemasukan bulan ini

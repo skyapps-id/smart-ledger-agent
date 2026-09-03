@@ -16,6 +16,7 @@ type ConsumptionCycleRepository interface {
 	Create(ctx context.Context, cycle *domain.ConsumptionCycle) error
 	GetByID(ctx context.Context, id int64) (*domain.ConsumptionCycle, error)
 	GetActiveByItem(ctx context.Context, chatID, itemName string) (*domain.ConsumptionCycle, error)
+	ListActiveByItem(ctx context.Context, chatID, itemName string) ([]domain.ConsumptionCycle, error)
 	GetActiveByItemAndBatch(ctx context.Context, chatID, itemName, batchNumber string) (*domain.ConsumptionCycle, error)
 	Update(ctx context.Context, cycle *domain.ConsumptionCycle) error
 	ListByChat(ctx context.Context, chatID string, limit int) ([]domain.ConsumptionCycle, error)
@@ -58,6 +59,17 @@ func (r *consumptionCycleRepo) GetActiveByItem(ctx context.Context, chatID, item
 		return nil, err
 	}
 	return &cycle, nil
+}
+
+// ListActiveByItem mengembalikan SEMUA cycle aktif untuk satu item —
+// dipakai agent untuk meminta konfirmasi batch bila ada lebih dari satu.
+func (r *consumptionCycleRepo) ListActiveByItem(ctx context.Context, chatID, itemName string) ([]domain.ConsumptionCycle, error) {
+	var cycles []domain.ConsumptionCycle
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ? AND item_name = ? AND status = ?", chatID, itemName, domain.ConsumptionCycleActive).
+		Order("start_date DESC").
+		Find(&cycles).Error
+	return cycles, err
 }
 
 func (r *consumptionCycleRepo) GetActiveByItemAndBatch(ctx context.Context, chatID, itemName, batchNumber string) (*domain.ConsumptionCycle, error) {

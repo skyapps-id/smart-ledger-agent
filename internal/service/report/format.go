@@ -1,4 +1,4 @@
-package service
+package report
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 
 	"smart-ledger-agent/internal/domain"
 	repomodel "smart-ledger-agent/internal/repository/model"
+	"smart-ledger-agent/internal/service/agent"
 )
 
 // ── Report Types & Helpers ──
@@ -73,7 +74,7 @@ func formatTxnReport(metric reportMetric, p period, s *repomodel.TxnSummary) str
 		if s.Expense > 0 {
 			b.WriteString("\nRincian per kategori:\n")
 			for _, c := range sortedCategories(s.ByCategory) {
-				fmt.Fprintf(&b, "- %s: Rp%s\n", c, formatRupiah(s.ByCategory[c]))
+				fmt.Fprintf(&b, "- %s: Rp%s\n", c, agent.FormatRupiah(s.ByCategory[c]))
 			}
 		} else {
 			b.WriteString("Belum ada pengeluaran.")
@@ -93,26 +94,7 @@ func formatTxnReport(metric reportMetric, p period, s *repomodel.TxnSummary) str
 }
 
 func writeLine(b *strings.Builder, label string, amount float64) {
-	fmt.Fprintf(b, "%s: Rp%s\n", label, formatRupiah(amount))
-}
-
-func formatStock(items []domain.Inventory, itemFilter string) string {
-	if len(items) == 0 {
-		if itemFilter != "" {
-			return fmt.Sprintf("Tidak ada stok untuk \"%s\".", itemFilter)
-		}
-		return "Belum ada barang di inventaris."
-	}
-	var b strings.Builder
-	if itemFilter != "" {
-		fmt.Fprintf(&b, "Stok saat ini (%s):\n", itemFilter)
-	} else {
-		b.WriteString("Stok saat ini:\n")
-	}
-	for _, it := range items {
-		fmt.Fprintf(&b, "- %s: %g %s\n", it.ItemName, it.StockQty, it.Unit)
-	}
-	return b.String()
+	fmt.Fprintf(b, "%s: Rp%s\n", label, agent.FormatRupiah(amount))
 }
 
 // sortedCategories mengembalikan key map diurutkan menurun berdasar nilai.
@@ -134,10 +116,10 @@ func formatExpenseByItem(p period, items []repomodel.ItemBreakdown) string {
 	fmt.Fprintf(&b, "Pengeluaran per item (%s):\n", p.label)
 	var total float64
 	for _, it := range items {
-		fmt.Fprintf(&b, "- %s: Rp%s (%dx)\n", it.ItemName, formatRupiah(it.Amount), it.Count)
+		fmt.Fprintf(&b, "- %s: Rp%s (%dx)\n", it.ItemName, agent.FormatRupiah(it.Amount), it.Count)
 		total += it.Amount
 	}
-	fmt.Fprintf(&b, "Total: Rp%s", formatRupiah(total))
+	fmt.Fprintf(&b, "Total: Rp%s", agent.FormatRupiah(total))
 	return b.String()
 }
 

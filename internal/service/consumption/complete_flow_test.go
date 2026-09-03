@@ -1,5 +1,5 @@
 // Package service tests untuk flow lengkap beli → pakai → habis.
-package service
+package consumption
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 	logRepo := repository.NewStockLogRepository(db)
 
 	logger := slog.Default()
-	consumptionService := NewConsumptionService(db, cycleRepo, logger)
+	consumptionService := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-flow"
@@ -213,7 +213,7 @@ func TestStartUsageErrors(t *testing.T) {
 	db := setupCompleteFlowTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-errors"

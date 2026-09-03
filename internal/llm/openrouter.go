@@ -27,14 +27,15 @@ type Usage struct {
 	CostUSD              float64 `json:"cost_usd"`
 }
 
-// Extractor abstraksi klien ekstraksi LLM.
+// Extractor abstraksi klien ekstraksi LLM. System prompt dibawa caller
+// (agent pemiliknya), bukan di-hardcode di transport layer.
 type Extractor interface {
-	Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, Usage, error)
+	Extract(ctx context.Context, systemPrompt, rawText, inventoryContext, sessionID string) (domain.Extraction, Usage, error)
 }
 
 // IntentExtractor abstraksi untuk intent classification menggunakan LLM.
 type IntentExtractor interface {
-	ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, Usage, error)
+	ClassifyIntent(ctx context.Context, systemPrompt, rawText, sessionID string) (domain.ServiceAction, Usage, error)
 }
 
 // New membuat klien OpenRouter dengan HTTP client default.
@@ -172,10 +173,10 @@ func calculateCost(promptTokens, completionTokens, cachedTokens int) float64 {
 }
 
 // Extract mengirim teks ke LLM dan mengembalikan entitas terstruktur.
-// inventoryContext adalah snapshot inventory chat (hasil BuildInventoryPrompt)
-// yang di-inject sebagai konteks tambahan ke system prompt.
-func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventoryContext string, sessionID string) (domain.Extraction, Usage, error) {
-	systemPrompt := SystemPrompt
+// systemPrompt adalah prompt milik agent pemanggil; inventoryContext adalah
+// snapshot inventory chat (hasil BuildInventoryPrompt) yang di-inject sebagai
+// konteks tambahan ke system prompt.
+func (c *openRouterClient) Extract(ctx context.Context, systemPrompt, rawText, inventoryContext, sessionID string) (domain.Extraction, Usage, error) {
 	if inventoryContext != "" {
 		systemPrompt += inventoryContext
 	}
@@ -255,9 +256,10 @@ func parseContent(content string) (domain.Extraction, error) {
 }
 
 // ClassifyIntent mengklasifikasikan intent pesan pengguna menggunakan LLM.
-func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, sessionID string) (domain.ServiceAction, Usage, error) {
+// systemPrompt adalah prompt milik orchestrator pemanggil.
+func (c *openRouterClient) ClassifyIntent(ctx context.Context, systemPrompt, rawText, sessionID string) (domain.ServiceAction, Usage, error) {
 	body := c.buildChatRequest([]chatMessage{
-		{Role: "system", Content: SystemPromptIntent},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: "Klasifikasikan pesan ini: " + strings.TrimSpace(rawText)},
 	}, sessionID)
 

@@ -1,5 +1,5 @@
 // Package service tests untuk consumption service dengan tanggal pembelian dan habis.
-package service
+package consumption
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 	db := setupConsumptionTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-123"
@@ -62,8 +62,8 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		actualDays := endDate.Sub(cycle.StartDate).Hours() / 24
 		assert.InDelta(t, expectedDays, actualDays, 0.5)
 
-		actualTotalConsumed := cycle.ConsumedQty * cycle.ConversionFactor
-		assert.InDelta(t, 800.0, actualTotalConsumed, 1.0)
+		// ConsumedQty sudah dalam satuan dasar (gr) — bukan dikali factor lagi.
+		assert.InDelta(t, 800.0, cycle.ConsumedQty, 1.0)
 	})
 
 	t.Run("Calculate daily consumption tanpa menyimpan cycle", func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 	db := setupConsumptionTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-history"

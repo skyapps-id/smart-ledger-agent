@@ -28,9 +28,9 @@ type InventoryRepository interface {
 
 // CategorySummary merepresentasikan summary inventory per kategori sederhana.
 type CategorySummary struct {
-	Category string  `json:"category"`
-	Count    int64   `json:"count"`
-	Example  string  `json:"example"` // Contoh item dari kategori ini
+	Category string `json:"category"`
+	Count    int64  `json:"count"`
+	Example  string `json:"example"` // Contoh item dari kategori ini
 }
 
 type inventoryRepo struct{ db *gorm.DB }
@@ -139,12 +139,12 @@ func (r *inventoryRepo) GetCategorySummary(ctx context.Context, chatID string) (
 
 	// Simple categorization based on keywords
 	categories := map[string][]string{
-		"MINUMAN":       {"susu", "kopi", "teh", "air", "minuman", "jus", "soda"},
-		"SEMBAKO":       {"beras", "gula", "tepung", "mie", "bumbu", "minyak", "kacang", "cabe", "bawang"},
-		"MAKAN":         {"roti", "biskuit", "snack", "keripik", "wafer", "coklat"},
-		"HARI_HARI":     {"sabun", "detergent", "tissue", "plastik", "pembersih", "shampo", "pasta gigi"},
-		"POPUK":         {"popok", "diaper", "pampers"},
-		"LAINNYA":       {},
+		"MINUMAN":   {"susu", "kopi", "teh", "air", "minuman", "jus", "soda"},
+		"SEMBAKO":   {"beras", "gula", "tepung", "mie", "bumbu", "minyak", "kacang", "cabe", "bawang"},
+		"MAKAN":     {"roti", "biskuit", "snack", "keripik", "wafer", "coklat"},
+		"HARI_HARI": {"sabun", "detergent", "tissue", "plastik", "pembersih", "shampo", "pasta gigi"},
+		"POPUK":     {"popok", "diaper", "pampers"},
+		"LAINNYA":   {},
 	}
 
 	// Categorize items

@@ -1,5 +1,5 @@
 // Package service tests untuk consumption cycle dengan batch number.
-package service
+package consumption
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 	db := setupBatchTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-batch"
@@ -182,4 +182,48 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 		report2, _ := service.CompleteUsage(ctx, chatID, "Minyak 1L", batch2)
 		assert.Contains(t, report2, batch2)
 	})
+}
+
+// TestStartUsageSemantics mengunci semantic satuan cycle: PurchaseQty dalam
+// satuan inventory (pcs), ConversionFactor = isi gr/ml per satuan inventory
+// (dari nama barang), ConsumedQty dalam satuan dasar (gr).
+func TestStartUsageSemantics(t *testing.T) {
+	db := setupBatchTestDB(t)
+	cycleRepo := repository.NewConsumptionCycleRepository(db)
+	svc := NewService(db, cycleRepo, slog.Default())
+
+	cycle, err := svc.StartUsage(context.Background(), "chat-uom", "susu bmt 200g", 1, "pcs", 1.0, "2026-03-01")
+	require.NoError(t, err)
+
+	assert.Equal(t, 1.0, cycle.PurchaseQty)        // satuan inventory
+	assert.Equal(t, "pcs", cycle.PurchaseUnit)     //
+	assert.Equal(t, 200.0, cycle.ConversionFactor) // gr per pcs
+	assert.Equal(t, 200.0, cycle.ConsumedQty)      // satuan dasar
+	assert.Equal(t, "gr", cycle.ConsumedUnit)      //
+}
+
+// TestListActiveByItemMultiBatch: dua batch aktif untuk satu item harus
+// ter-list keduanya (dipakai konfirmasi batch di agent).
+func TestListActiveByItemMultiBatch(t *testing.T) {
+	db := setupBatchTestDB(t)
+	cycleRepo := repository.NewConsumptionCycleRepository(db)
+	svc := NewService(db, cycleRepo, slog.Default())
+	ctx := context.Background()
+
+	// Dua "pakai" berturut = dua batch aktif.
+	_, err := svc.StartUsage(ctx, "chat-multi", "susu bmt 200g", 1, "pcs", 1.0, "2026-09-01")
+	require.NoError(t, err)
+	_, err = svc.StartUsage(ctx, "chat-multi", "susu bmt 200g", 1, "pcs", 1.0, "2026-09-02")
+	require.NoError(t, err)
+
+	cycles, err := cycleRepo.ListActiveByItem(ctx, "chat-multi", "susu bmt 200g")
+	require.NoError(t, err)
+	assert.Len(t, cycles, 2)
+	// Terbaru dulu.
+	assert.Equal(t, "2026-09-02", cycles[0].StartDate.Format("2006-01-02"))
+
+	// Item lain tidak ikut.
+	other, err := cycleRepo.ListActiveByItem(ctx, "chat-multi", "kopi 100gr")
+	require.NoError(t, err)
+	assert.Empty(t, other)
 }

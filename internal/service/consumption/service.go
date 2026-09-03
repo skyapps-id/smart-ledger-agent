@@ -1,5 +1,5 @@
-// Package service menyediakan business logic untuk consumption cycles.
-package service
+// Package consumption menyediakan business logic untuk consumption cycles
+package consumption
 
 import (
 	"context"
@@ -16,18 +16,18 @@ import (
 	"smart-ledger-agent/internal/repository"
 )
 
-// ConsumptionService menangani pembuatan dan analisa consumption cycles.
-type ConsumptionService struct {
+// Service menangani pembuatan dan analisa consumption cycles.
+type Service struct {
 	db        *gorm.DB
 	cycleRepo repository.ConsumptionCycleRepository
 	log       *slog.Logger
 }
 
-func NewConsumptionService(db *gorm.DB, cycleRepo repository.ConsumptionCycleRepository, logger *slog.Logger) *ConsumptionService {
+func NewService(db *gorm.DB, cycleRepo repository.ConsumptionCycleRepository, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ConsumptionService{
+	return &Service{
 		db:        db,
 		cycleRepo: cycleRepo,
 		log:       logger,
@@ -35,12 +35,12 @@ func NewConsumptionService(db *gorm.DB, cycleRepo repository.ConsumptionCycleRep
 }
 
 // StartCycle memulai siklus konsumsi baru ketika pembelian terjadi.
-func (s *ConsumptionService) StartCycle(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64) (*domain.ConsumptionCycle, error) {
+func (s *Service) StartCycle(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64) (*domain.ConsumptionCycle, error) {
 	return s.StartCycleWithDate(ctx, chatID, itemName, purchaseQty, purchaseUnit, conversionFactor, time.Now())
 }
 
 // StartCycleWithDate memulai siklus konsumsi baru dengan tanggal pembelian spesifik.
-func (s *ConsumptionService) StartCycleWithDate(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64, purchaseDate time.Time) (*domain.ConsumptionCycle, error) {
+func (s *Service) StartCycleWithDate(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64, purchaseDate time.Time) (*domain.ConsumptionCycle, error) {
 	// Determine smallest unit based on purchase unit
 	smallestUnit := determineSmallestUnit(purchaseUnit)
 
@@ -117,20 +117,20 @@ func determineSmallestUnit(purchaseUnit string) string {
 	return "gr"
 }
 
-// extractOriginalUnitFromItemName mengekstrak satuan asli dari nama item
+// ExtractOriginalUnitFromItemName mengekstrak satuan asli dari nama item
 // Contoh: "susu uht 500ml" → "ml", "susu 1kg" → "kg", "teh 200gr" → "gr"
-func extractOriginalUnitFromItemName(itemName string) string {
+func ExtractOriginalUnitFromItemName(itemName string) string {
 	lowerName := strings.ToLower(itemName)
-	
+
 	// Pattern untuk mencari angka + unit di nama item
-	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|kg|kilogram|l|liter)`)
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|g|kg|kilogram|l|liter)`)
 	matches := re.FindStringSubmatch(lowerName)
-	
+
 	if len(matches) >= 3 {
 		unit := matches[2]
 		// Normalize unit
 		switch unit {
-		case "gr", "gram":
+		case "gr", "gram", "g":
 			return "gr"
 		case "kg", "kilogram":
 			return "gr" // akan dikonversi ke gr
@@ -140,25 +140,25 @@ func extractOriginalUnitFromItemName(itemName string) string {
 			return "ml" // akan dikonversi ke ml
 		}
 	}
-	
+
 	return ""
 }
 
-// extractQuantityFromItemName mengekstrak quantity dari nama item
+// ExtractQuantityFromItemName mengekstrak quantity dari nama item
 // Contoh: "susu uht 500ml" → 500, "susu 1liter" → 1
-func extractQuantityFromItemName(itemName string) float64 {
+func ExtractQuantityFromItemName(itemName string) float64 {
 	lowerName := strings.ToLower(itemName)
-	
+
 	// Pattern untuk mencari angka + unit di nama item
-	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|kg|kilogram|l|liter)`)
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|g|kg|kilogram|l|liter)`)
 	matches := re.FindStringSubmatch(lowerName)
-	
+
 	if len(matches) >= 2 {
 		if qty, err := strconv.ParseFloat(matches[1], 64); err == nil {
 			return qty
 		}
 	}
-	
+
 	return 0
 }
 
@@ -193,7 +193,7 @@ func determineSmallestUnitFromName(itemName string) string {
 
 // StartUsage memulai pemakaian item (saat user bilang "pakai susu 400gr").
 // Ini akan membuat consumption cycle baru dengan auto-generated batch number.
-func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName string, usageQty float64, usageUnit string, conversionFactor float64, usageDate string) (*domain.ConsumptionCycle, error) {
+func (s *Service) StartUsage(ctx context.Context, chatID, itemName string, usageQty float64, usageUnit string, conversionFactor float64, usageDate string) (*domain.ConsumptionCycle, error) {
 	// Auto-generate batch number
 	batchNumber := generateBatchNumber()
 
@@ -206,20 +206,21 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 	}
 
 	// Extract original unit from item name untuk tracking yang akurat
-	originalUnit := extractOriginalUnitFromItemName(itemName)
-	originalQty := extractQuantityFromItemName(itemName)
-	
+	originalUnit := ExtractOriginalUnitFromItemName(itemName)
+	originalQty := ExtractQuantityFromItemName(itemName)
+
 	// Determine smallest unit based on usage unit
 	smallestUnit := determineSmallestUnit(usageUnit)
-	
-	// Jika ada original unit dari nama item, gunakan untuk consumption tracking
+
+	// Jika ada original unit dari nama item, gunakan untuk consumption tracking.
+	// Semantic seragam: usageQty dalam SATUAN INVENTORY (pcs hasil konversi),
+	// conversion factor = isi gr/ml per satuan inventory (mis. 1 pcs susu
+	// bmt 200g = 200 gr), ConsumedQty = pemakaian dalam SATUAN DASAR (gr/ml).
 	finalConsumptionQty := usageQty
 	finalConversionFactor := conversionFactor
-	
+
 	if originalUnit != "" && originalQty > 0 {
-		// Use original unit from item name for accurate tracking
-		finalConsumptionQty = originalQty
-		finalConversionFactor = 1.0 // already in smallest unit
+		finalConversionFactor = originalQty
 		smallestUnit = determineSmallestUnit(originalUnit)
 	}
 
@@ -233,11 +234,11 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 		ItemName:         itemName,
 		BatchNumber:      batchNumber,
 		StartDate:        startDate,
-		PurchaseQty:      usageQty,    // gunakan quantity dari inventory (pcs)
-		PurchaseUnit:     usageUnit,   // gunakan unit dari inventory (pcs)  
+		PurchaseQty:      usageQty,  // gunakan quantity dari inventory (pcs)
+		PurchaseUnit:     usageUnit, // gunakan unit dari inventory (pcs)
 		ConversionFactor: finalConversionFactor,
 		ConsumedQty:      finalConsumptionQty * finalConversionFactor, // tracking dalam unit asli (ml/gr)
-		ConsumedUnit:     smallestUnit, // tracking dalam unit asli (ml/gr)
+		ConsumedUnit:     smallestUnit,                                // tracking dalam unit asli (ml/gr)
 		Status:           domain.ConsumptionCycleActive,
 	}
 
@@ -250,7 +251,7 @@ func (s *ConsumptionService) StartUsage(ctx context.Context, chatID, itemName st
 }
 
 // RecordConsumption mencatat pemakaian dan mengupdate siklus aktif.
-func (s *ConsumptionService) RecordConsumption(ctx context.Context, chatID, itemName string, consumedQty float64, consumedUnit string) (*domain.ConsumptionCycle, error) {
+func (s *Service) RecordConsumption(ctx context.Context, chatID, itemName string, consumedQty float64, consumedUnit string) (*domain.ConsumptionCycle, error) {
 	// Cek siklus aktif
 	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
 	if err != nil {
@@ -289,7 +290,13 @@ func (s *ConsumptionService) RecordConsumption(ctx context.Context, chatID, item
 
 // CompleteUsage menyelesaikan siklus konsumsi saat item habis ("susu sudah habis").
 // Menghitung durasi dan daily rate, lalu return laporan lengkap.
-func (s *ConsumptionService) CompleteUsage(ctx context.Context, chatID, itemName, batchNumber string) (string, error) {
+func (s *Service) CompleteUsage(ctx context.Context, chatID, itemName, batchNumber string) (string, error) {
+	return s.CompleteUsageWithDate(ctx, chatID, itemName, batchNumber, time.Now())
+}
+
+// CompleteUsageWithDate seperti CompleteUsage tapi memakai tanggal habis
+// eksplisit dari user (mis. "habis 20/01") alih-alih waktu sekarang.
+func (s *Service) CompleteUsageWithDate(ctx context.Context, chatID, itemName, batchNumber string, endTime time.Time) (string, error) {
 	// Cari cycle aktif untuk item+batch ini
 	var cycle *domain.ConsumptionCycle
 	var err error
@@ -308,8 +315,7 @@ func (s *ConsumptionService) CompleteUsage(ctx context.Context, chatID, itemName
 		return "", fmt.Errorf("tidak ada siklus aktif untuk %s%s", itemName, batchInfo)
 	}
 
-	// Hitung durasi dalam hari
-	endTime := time.Now()
+	// Hitung durasi dalam hari (dari tanggal habis eksplisit user)
 	daysInUse := endTime.Sub(cycle.StartDate).Hours() / 24
 
 	if daysInUse <= 0 {
@@ -329,7 +335,7 @@ func (s *ConsumptionService) CompleteUsage(ctx context.Context, chatID, itemName
 	// Update cycle ke completed
 	cycle.Status = domain.ConsumptionCycleCompleted
 	cycle.EndDate = &endTime
-	cycle.ConsumedQty = totalPurchasedInSmallestUnit / cycle.ConversionFactor // Set ke full amount
+	cycle.ConsumedQty = totalPurchasedInSmallestUnit // penuh, dalam satuan dasar (gr/ml)
 	cycle.ConsumedUnit = displayUnit
 
 	if err := s.cycleRepo.Update(ctx, cycle); err != nil {
@@ -364,7 +370,7 @@ func (s *ConsumptionService) CompleteUsage(ctx context.Context, chatID, itemName
 }
 
 // GetActiveCycleInfo mendapatkan informasi siklus aktif untuk analisa.
-func (s *ConsumptionService) GetActiveCycleInfo(ctx context.Context, chatID, itemName, batchNumber string) (string, error) {
+func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID, itemName, batchNumber string) (string, error) {
 	var cycle *domain.ConsumptionCycle
 	var err error
 
@@ -385,7 +391,7 @@ func (s *ConsumptionService) GetActiveCycleInfo(ctx context.Context, chatID, ite
 	daysInUse := time.Since(cycle.StartDate).Hours() / 24
 
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-	totalConsumedInSmallestUnit := cycle.ConsumedQty * cycle.ConversionFactor
+	totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan dasar (gr/ml)
 	remainingInSmallestUnit := totalPurchasedInSmallestUnit - totalConsumedInSmallestUnit
 
 	dailyRateInSmallestUnit := 0.0
@@ -439,7 +445,7 @@ func (s *ConsumptionService) GetActiveCycleInfo(ctx context.Context, chatID, ite
 }
 
 // ListActiveItems menampilkan semua item aktif dengan batch numbers untuk user selection.
-func (s *ConsumptionService) ListActiveItems(ctx context.Context, chatID string) (string, error) {
+func (s *Service) ListActiveItems(ctx context.Context, chatID string) (string, error) {
 	cycles, err := s.cycleRepo.ListByChat(ctx, chatID, 0) // 0 = no limit
 	if err != nil {
 		return "", fmt.Errorf("gagal mengambil list active items: %w", err)
@@ -475,7 +481,7 @@ func (s *ConsumptionService) ListActiveItems(ctx context.Context, chatID string)
 		}
 
 		// Extract actual quantity from item name for accurate display
-		displayQty := extractQuantityFromItemName(cycle.ItemName)
+		displayQty := ExtractQuantityFromItemName(cycle.ItemName)
 		if displayQty == 0 {
 			displayQty = totalInSmallestUnit // fallback ke calculated quantity
 		}
@@ -494,7 +500,7 @@ func (s *ConsumptionService) ListActiveItems(ctx context.Context, chatID string)
 }
 
 // GetHistory mendapatkan history siklus konsumsi untuk item tertentu.
-func (s *ConsumptionService) GetHistory(ctx context.Context, chatID, itemName string, limit int) (string, error) {
+func (s *Service) GetHistory(ctx context.Context, chatID, itemName string, limit int) (string, error) {
 	cycles, err := s.cycleRepo.ListByChat(ctx, chatID, limit)
 	if err != nil {
 		return "", fmt.Errorf("gagal mengambil history: %w", err)
@@ -525,7 +531,7 @@ func (s *ConsumptionService) GetHistory(ctx context.Context, chatID, itemName st
 		}
 
 		totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-		totalConsumedInSmallestUnit := cycle.ConsumedQty * cycle.ConversionFactor
+		totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan dasar (gr/ml)
 		displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
 
 		dailyConsumptionInSmallestUnit := 0.0
@@ -552,7 +558,7 @@ func (s *ConsumptionService) GetHistory(ctx context.Context, chatID, itemName st
 }
 
 // CompleteCycleWithEndDate menyelesaikan siklus konsumsi dengan tanggal habis yang spesifik.
-func (s *ConsumptionService) CompleteCycleWithEndDate(ctx context.Context, chatID, itemName string, endDate time.Time) (*domain.ConsumptionCycle, error) {
+func (s *Service) CompleteCycleWithEndDate(ctx context.Context, chatID, itemName string, endDate time.Time) (*domain.ConsumptionCycle, error) {
 	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
 	if err != nil {
 		return nil, fmt.Errorf("tidak ada siklus aktif untuk %s: %w", itemName, err)
@@ -577,7 +583,7 @@ func (s *ConsumptionService) CompleteCycleWithEndDate(ctx context.Context, chatI
 		displayUnit = determineSmallestUnitFromName(itemName)
 	}
 
-	cycle.ConsumedQty = totalPurchasedInSmallestUnit / cycle.ConversionFactor
+	cycle.ConsumedQty = totalPurchasedInSmallestUnit // penuh, dalam satuan dasar (gr/ml)
 	cycle.ConsumedUnit = displayUnit
 	cycle.Status = domain.ConsumptionCycleCompleted
 	cycle.EndDate = &endDate
@@ -595,7 +601,7 @@ func (s *ConsumptionService) CompleteCycleWithEndDate(ctx context.Context, chatI
 }
 
 // CalculateDailyConsumption menghitung konsumsi harian dalam satuan terkecil (gr/ml).
-func (s *ConsumptionService) CalculateDailyConsumption(ctx context.Context, chatID, itemName string, purchaseDate, endDate time.Time, purchaseQty float64, purchaseUnit string, conversionFactor float64) (string, error) {
+func (s *Service) CalculateDailyConsumption(ctx context.Context, chatID, itemName string, purchaseDate, endDate time.Time, purchaseQty float64, purchaseUnit string, conversionFactor float64) (string, error) {
 	daysInUse := endDate.Sub(purchaseDate).Hours() / 24
 	if daysInUse <= 0 {
 		return "", fmt.Errorf("tanggal habis harus setelah tanggal pembelian")
@@ -626,7 +632,7 @@ func (s *ConsumptionService) CalculateDailyConsumption(ctx context.Context, chat
 }
 
 // UpdateConsumption mengupdate nilai konsumsi untuk cycle yang sudah ada (koreksi data)
-func (s *ConsumptionService) UpdateConsumption(ctx context.Context, chatID, itemName, batchNumber string, consumedQty float64, consumedUnit string) (string, error) {
+func (s *Service) UpdateConsumption(ctx context.Context, chatID, itemName, batchNumber string, consumedQty float64, consumedUnit string) (string, error) {
 	// Cari cycle aktif untuk item+batch ini
 	var cycle *domain.ConsumptionCycle
 	var err error
@@ -656,7 +662,7 @@ func (s *ConsumptionService) UpdateConsumption(ctx context.Context, chatID, item
 	// Hitung ulang info untuk display
 	daysInUse := time.Since(cycle.StartDate).Hours() / 24
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-	totalConsumedInSmallestUnit := cycle.ConsumedQty * cycle.ConversionFactor
+	totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan dasar (gr/ml)
 	remainingInSmallestUnit := totalPurchasedInSmallestUnit - totalConsumedInSmallestUnit
 
 	dailyRateInSmallestUnit := 0.0

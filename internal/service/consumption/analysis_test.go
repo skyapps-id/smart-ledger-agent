@@ -1,4 +1,4 @@
-package service
+package consumption
 
 import (
 	"testing"

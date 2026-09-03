@@ -19,8 +19,9 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Env  string
-	Port string
+	Env     string
+	Port    string
+	DevMode bool // aktifkan endpoint test POST /dev/message (tanpa WAHA)
 }
 
 type DBConfig struct {
@@ -60,6 +61,9 @@ func Load() (*Config, error) {
 		App: AppConfig{
 			Env:  env("APP_ENV", "development"),
 			Port: env("APP_PORT", "8080"),
+			// Default aktif di development; di production harus
+			// di-set eksplisit via APP_DEV_MODE=true (tidak disarankan).
+			DevMode: envBool("APP_DEV_MODE", env("APP_ENV", "development") == "development"),
 		},
 		DB: DBConfig{
 			DSN: env("DB_DSN", "host=localhost user=postgres password=postgres dbname=smart_ledger port=5432 sslmode=disable timezone=Asia/Jakarta"),
@@ -103,6 +107,15 @@ func (c *Config) validate() error {
 func env(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
 	}
 	return fallback
 }

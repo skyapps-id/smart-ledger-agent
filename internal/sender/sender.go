@@ -14,6 +14,9 @@ import (
 type Message struct {
 	ChatID string
 	Text   string
+	// TaskID adalah ID korelasi pipeline (opsional, diisi reply helper);
+	// dipakai capture dev untuk menunggu balasan per task.
+	TaskID string
 }
 
 // Processor mengirim pesan WhatsApp ke WAHA.

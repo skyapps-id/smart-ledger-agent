@@ -7,7 +7,7 @@
 #   docker compose --profile app up -d
 #
 # Set di .env sebelum up:
-#   WAHA_API_KEY, WAHA_WEBHOOK_TOKEN, OPENROUTER_API_KEY
+#   WAHA_API_KEY, WAHA_WEBHOOK_TOKEN, LLM_API_KEY
 
 services:
   # ───────────────────────────────────────────────────────────
@@ -90,5 +90,6 @@ services:
       WAHA_SESSION: default
       WAHA_API_KEY: ${WAHA_API_KEY}
       WAHA_WEBHOOK_TOKEN: ${WAHA_WEBHOOK_TOKEN}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-chat}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.z.ai/api/paas/v4}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-glm-5.3-flash}

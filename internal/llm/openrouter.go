@@ -1,4 +1,4 @@
-// Package llm berisi klien ke OpenRouter (model DeepSeek) untuk
+// Package llm berisi klien ke Z.AI GLM (OpenAI-compatible API) untuk
 // ekstraksi entitas teks bahasa alami menjadi domain.Extraction.
 package llm
 
@@ -109,42 +109,60 @@ type respFormat struct {
 	Type string `json:"type"`
 }
 
+// tokenUsage adalah struktur usage dari response API (OpenAI-compatible).
+type tokenUsage struct {
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	TotalTokens          int `json:"total_tokens"`
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptTokensDetails  *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details,omitempty"`
+}
+
+// cacheHitTokens mengambil jumlah token cache hit, mendukung format
+// DeepSeek (prompt_cache_hit_tokens) maupun Z.AI/OpenAI (prompt_tokens_details.cached_tokens).
+func cacheHitTokens(u *tokenUsage) int {
+	if u.PromptCacheHitTokens > 0 {
+		return u.PromptCacheHitTokens
+	}
+	if u.PromptTokensDetails != nil {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	return 0
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
-	Usage *struct {
-		PromptTokens          int `json:"prompt_tokens"`
-		CompletionTokens      int `json:"completion_tokens"`
-		TotalTokens           int `json:"total_tokens"`
-		PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
-	} `json:"usage,omitempty"`
+	Usage *tokenUsage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 }
 
-// calculateCost menghitung biaya LLM berdasarkan token usage dan DeepSeek pricing.
-// DeepSeek pricing (per 1M tokens):
-// - Input: $0.14 USD
-// - Cache hit: $0.014 USD (90% discount)
-// - Output: $0.28 USD
-func calculateCost(promptTokens, completionTokens, cacheHitTokens int) float64 {
+// calculateCost menghitung biaya LLM berdasarkan token usage dan harga GLM-5.3-Flash.
+// GLM-5.3-Flash pricing (per 1M tokens):
+// - Input: $0.075 USD (promo 50%, list price $0.15)
+// - Cache hit: $0.015 USD
+// - Output: $0.25 USD (promo 50%, list price $0.50)
+func calculateCost(promptTokens, completionTokens, cachedTokens int) float64 {
 	const (
-		inputPricePerMillion  = 0.14  // $0.14 per 1M input tokens
-		cachePricePerMillion  = 0.014 // $0.014 per 1M cache hit tokens (90% discount)
-		outputPricePerMillion = 0.28  // $0.28 per 1M output tokens
+		inputPricePerMillion  = 0.075 // $0.075 per 1M input tokens
+		cachePricePerMillion  = 0.015 // $0.015 per 1M cache hit tokens
+		outputPricePerMillion = 0.25  // $0.25 per 1M output tokens
 	)
 
 	// Calculate input cost (excluding cache hits)
-	regularInputTokens := promptTokens - cacheHitTokens
+	regularInputTokens := promptTokens - cachedTokens
 	if regularInputTokens < 0 {
 		regularInputTokens = 0
 	}
 	inputCost := float64(regularInputTokens) / 1_000_000 * inputPricePerMillion
 
-	// Calculate cache hit cost (90% discount)
-	cacheCost := float64(cacheHitTokens) / 1_000_000 * cachePricePerMillion
+	// Calculate cache hit cost (80% discount)
+	cacheCost := float64(cachedTokens) / 1_000_000 * cachePricePerMillion
 
 	// Calculate output cost
 	outputCost := float64(completionTokens) / 1_000_000 * outputPricePerMillion
@@ -193,7 +211,7 @@ func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventor
 		return domain.Extraction{}, Usage{}, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.Extraction{}, Usage{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return domain.Extraction{}, Usage{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 
 	var chat chatResponse
@@ -219,7 +237,7 @@ func (c *openRouterClient) Extract(ctx context.Context, rawText string, inventor
 		usage.PromptTokens = chat.Usage.PromptTokens
 		usage.CompletionTokens = chat.Usage.CompletionTokens
 		usage.TotalTokens = chat.Usage.TotalTokens
-		usage.PromptCacheHitTokens = chat.Usage.PromptCacheHitTokens
+		usage.PromptCacheHitTokens = cacheHitTokens(chat.Usage)
 		usage.CostUSD = calculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptCacheHitTokens)
 	}
 
@@ -269,7 +287,7 @@ func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, s
 		return domain.ServiceAction{}, Usage{}, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.ServiceAction{}, Usage{}, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return domain.ServiceAction{}, Usage{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 
 	var chat chatResponse
@@ -294,7 +312,7 @@ func (c *openRouterClient) ClassifyIntent(ctx context.Context, rawText string, s
 		usage.PromptTokens = chat.Usage.PromptTokens
 		usage.CompletionTokens = chat.Usage.CompletionTokens
 		usage.TotalTokens = chat.Usage.TotalTokens
-		usage.PromptCacheHitTokens = chat.Usage.PromptCacheHitTokens
+		usage.PromptCacheHitTokens = cacheHitTokens(chat.Usage)
 		usage.CostUSD = calculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptCacheHitTokens)
 	}
 

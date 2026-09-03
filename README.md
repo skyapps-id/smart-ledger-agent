@@ -34,7 +34,7 @@ flowchart LR
     H -->|instant 200 OK| W
     H -->|enqueue| Q{{LLM Worker Queue<br/>buffered channel}}
     Q --> L[LLM Worker Pool<br/>concurrent 4 workers]
-    L -->|extract intent| R[OpenRouter<br/>DeepSeek]
+    L -->|extract intent| R[Z.AI<br/>GLM-5.3-Flash]
     L -->|read / write| DB[(PostgreSQL)]
     L -->|enqueue reply| S{{WAHA Sender Queue<br/>sequential}}
     S --> T[WAHA Sender Worker<br/>single worker]
@@ -404,9 +404,9 @@ cek sisa susu di rumah          # natural language query
 | `WAHA_API_KEY` | ✓ | – | API key for `POST /api/sendText` |
 | `WAHA_WEBHOOK_TOKEN` | ✓ | – | webhook validation token |
 | `WAHA_DASHBOARD_PASSWORD` | – | `admin` | WAHA dashboard password |
-| `OPENROUTER_BASE_URL` | – | `https://openrouter.ai/api/v1` | – |
-| `OPENROUTER_API_KEY` | ✓ | – | OpenRouter API key |
-| `OPENROUTER_MODEL` | – | `deepseek/deepseek-chat` | LLM model |
+| `LLM_BASE_URL` | – | `https://api.z.ai/api/paas/v4` | Z.AI API base URL |
+| `LLM_API_KEY` | ✓ | – | Z.AI API key |
+| `LLM_MODEL` | – | `glm-5.3-flash` | LLM model |
 | `WORKER_CONCURRENCY` | – | `4` | LLM worker concurrency |
 | `WORKER_QUEUE_SIZE` | – | `256` | LLM worker queue size |
 | `WORKER_MAX_RETRIES` | – | `3` | max retries for LLM operations |
@@ -609,8 +609,8 @@ tail -f logs/app.log | grep -E "worker|queue|retry"
 | ORM | GORM |
 | Database | PostgreSQL 16 |
 | WhatsApp Engine | WAHA (NOWEB) |
-| LLM Provider | OpenRouter |
-| LLM Model | DeepSeek Chat (default) |
+| LLM Provider | Z.AI (GLM) |
+| LLM Model | GLM-5.3-Flash (default) |
 | Intent Classification | Custom LLM-based routing |
 | Consumption Tracking | Auto-generated batch numbers, smart unit detection (ml/gr) |
 | Cache | `patrickmn/go-cache` (in-memory) |
@@ -620,49 +620,44 @@ tail -f logs/app.log | grep -E "worker|queue|retry"
 
 ### LLM Configuration
 
-The system supports both **DeepSeek API direct** and **OpenRouter** as LLM providers:
+The system supports **Z.AI GLM API** (OpenAI-compatible), **DeepSeek**, and **OpenRouter** as LLM providers:
 
 ```env
-# Option 1: DeepSeek API direct (recommended — more stable, cheaper, built-in context caching)
+# Option 1: Z.AI GLM API (recommended — cheap, 1M context, built-in context caching)
+# https://docs.z.ai/guides/overview/quick-start
+LLM_BASE_URL=https://api.z.ai/api/paas/v4
+LLM_API_KEY=your_zai_api_key
+LLM_MODEL=glm-5.3-flash
+
+# Option 2: DeepSeek API direct (fallback)
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=your_deepseek_api_key
 LLM_MODEL=deepseek-chat
 
-# Option 2: Via OpenRouter (fallback)
+# Option 3: Via OpenRouter (fallback)
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_API_KEY=your_openrouter_api_key
 LLM_MODEL=deepseek/deepseek-chat
 ```
 
-**DeepSeek API direct advantages:**
-- Context caching **enabled by default** (disk-based, persists hours to days)
-- No rate limit issues from intermediary (OpenRouter)
-- Cache hit tokens reported in `usage.prompt_cache_hit_tokens`
-- Lower latency (direct connection)
-
-**Free models via OpenRouter:**
-
-> **Free models list:** [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0&order=most-popular&output_modalities=text)
-
-| Model | Params | Context | Best For |
-|-------|--------|---------|----------|
-| `google/gemma-4-31b-it:free` | 31B | 262K | **Best free option** - large model, good JSON consistency |
-| `openai/gpt-oss-20b:free` | 20B | 131K | OpenAI open-source, reliable JSON output |
-| `nvidia/nemotron-3.5-lightning:free` | - | 1M | Fast, huge context window |
-| `liquid/lfm-2.5-2.6b:free` | 2.6B | 128K | Lightweight, fastest |
+**Z.AI GLM API advantages:**
+- **Very cheap**: GLM-5.3-Flash at $0.075 input / $0.25 output per 1M tokens (50% promo)
+- **1M token context window** with built-in context caching
+- OpenAI-compatible endpoint — no SDK change needed
+- Cache hit tokens reported in `usage.prompt_tokens_details.cached_tokens`
 
 **To switch models:**
 ```bash
-# DeepSeek direct (recommended)
-LLM_BASE_URL=https://api.deepseek.com
+# Z.AI GLM (recommended)
+LLM_BASE_URL=https://api.z.ai/api/paas/v4
 LLM_API_KEY=your_key
-LLM_MODEL=deepseek-chat
+LLM_MODEL=glm-5.3-flash
 
 # Restart app
 make dev
 ```
 
-**Note:** `session_id` is automatically sent only when using OpenRouter (for sticky routing / prompt caching). DeepSeek API has context caching enabled by default — no configuration needed.
+**Note:** `session_id` is automatically sent only when using OpenRouter (for sticky routing / prompt caching). Z.AI and DeepSeek have context caching enabled by default — no configuration needed.
 
 ---
 
@@ -677,10 +672,10 @@ Every LLM request includes real-time cost tracking and transparent reporting:
 This appears at the bottom of every WhatsApp reply, showing the total cost for that specific request.
 
 ### Cost Calculation
-Cost is calculated based on DeepSeek pricing:
-- **Input tokens**: $0.14 per million
-- **Cache hits**: $0.014 per million (90% discount)
-- **Output tokens**: $0.28 per million
+Cost is calculated based on GLM-5.3-Flash pricing:
+- **Input tokens**: $0.075 per million (50% promo, list price $0.15)
+- **Cache hits**: $0.015 per million
+- **Output tokens**: $0.25 per million (50% promo, list price $0.50)
 
 ### Cost Breakdown per Request Type
 | Request Type | Components | Avg Cost |
@@ -694,7 +689,7 @@ Cost is calculated based on DeepSeek pricing:
 The system tracks detailed token usage:
 - `prompt_tokens`: Total input tokens
 - `completion_tokens`: Output tokens  
-- `prompt_cache_hit_tokens`: Cached tokens (DeepSeek KV cache)
+- `prompt_cache_hit_tokens`: Cached tokens (Z.AI / DeepSeek KV cache)
 - `total_tokens`: Combined total
 - `cost_usd`: Calculated cost in USD
 
@@ -708,9 +703,9 @@ With search optimization and category summarization:
 | **Overall Average** | ~1500 tokens | ~450 tokens | **~70%** |
 
 ### Cache Effectiveness
-DeepSeek's KV cache provides automatic cost savings:
+Z.AI's context cache provides automatic cost savings:
 - **Cache hit rate**: ~85%+ for repeated system prompts
-- **Cost discount**: 90% on cached tokens
+- **Cost discount**: 80% on cached tokens ($0.015 vs $0.075 per million)
 - **No configuration needed**: Works automatically
 
 ---

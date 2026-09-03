@@ -71,9 +71,9 @@ func Load() (*Config, error) {
 			WebhookToken: env("WAHA_WEBHOOK_TOKEN", ""),
 		},
 		LLM: LLMConfig{
-			BaseURL: env("LLM_BASE_URL", env("OPENROUTER_BASE_URL", "https://api.deepseek.com")),
-			APIKey:  env("LLM_API_KEY", env("OPENROUTER_API_KEY", "")),
-			Model:   env("LLM_MODEL", env("OPENROUTER_MODEL", "deepseek-chat")),
+			BaseURL: env("LLM_BASE_URL", env("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4")),
+			APIKey:  env("LLM_API_KEY", env("ZAI_API_KEY", "")),
+			Model:   env("LLM_MODEL", env("ZAI_MODEL", "glm-5.3-flash")),
 		},
 		Worker: WorkerConfig{
 			Concurrency: envInt("WORKER_CONCURRENCY", 4), // LLM workers tetap concurrent
@@ -95,7 +95,7 @@ func Load() (*Config, error) {
 
 func (c *Config) validate() error {
 	if c.LLM.APIKey == "" {
-		return fmt.Errorf("OPENROUTER_API_KEY wajib diisi")
+		return fmt.Errorf("LLM_API_KEY wajib diisi")
 	}
 	return nil
 }

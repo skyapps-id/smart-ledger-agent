@@ -2,10 +2,14 @@ package transaction
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"smart-ledger-agent/internal/domain"
+	"smart-ledger-agent/internal/service/agent"
 )
 
 // ── Date parsing helpers ──
@@ -88,6 +92,27 @@ func formatDuration(days float64) string {
 		return "1 bulan"
 	}
 	return fmt.Sprintf("%.0f bulan", months)
+}
+
+// repurchaseAnalysis menyusun kalimat analisa beli ulang untuk item non-stok:
+// berapa lama pembelian sebelumnya "bertahan" (jarak ke pembelian baru) dan
+// rata-rata belanja per hari. Mengembalikan string kosong bila tidak layak
+// ditampilkan (tidak ada pembelian sebelumnya atau jarak < 1 hari).
+func repurchaseAnalysis(newTxnDate time.Time, last *domain.Transaction) string {
+	if last == nil || last.Amount <= 0 {
+		return ""
+	}
+	days := newTxnDate.Sub(last.TransactionDate).Hours() / 24
+	if days < 1 {
+		return ""
+	}
+	avgDaily := last.Amount / days
+	return fmt.Sprintf(
+		" Analisa beli ulang: %s sebelumnya Rp%s (%s) bertahan %s → rata-rata Rp%s/hari.",
+		last.ItemName, agent.FormatRupiah(last.Amount),
+		last.TransactionDate.Format("02/01"),
+		formatDuration(days), agent.FormatRupiah(math.Round(avgDaily)),
+	)
 }
 
 // ── Unit parsing helpers ──

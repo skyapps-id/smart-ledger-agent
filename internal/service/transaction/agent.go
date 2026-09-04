@@ -167,6 +167,8 @@ func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.Incoming
 // handleExpense: catat pengeluaran. Hanya tambah stok bila affects_stock=true (RFC §7.1).
 func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
 	var inv *domain.Inventory
+	var lastPurchase *domain.Transaction
+	var txnDate time.Time
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Skip financial transaction creation if amount is 0 but affects stock (inventory-only update)
 		if ext.Amount == 0 && ext.AffectsStock {
@@ -188,10 +190,11 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return nil
 		}
 
-		txnDate, err := parseTransactionDate(ext.TransactionDate)
+		parsedDate, err := parseTransactionDate(ext.TransactionDate)
 		if err != nil {
 			return fmt.Errorf("format tanggal tidak valid: %w", err)
 		}
+		txnDate = parsedDate
 
 		var consumptionDate *time.Time
 		if ext.ConsumptionDate != "" {
@@ -218,8 +221,12 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return fmt.Errorf("catat expense: %w", err)
 		}
 
-		// Lewati inventaris bila pengeluaran bukan barang stok (jasa/utilitas/dll).
+		// Lewati inventaris bila pengeluaran bukan barang stok (jasa/utilitas/dll),
+		// tetapi ambil pembelian terakhir item yang sama untuk analisa beli ulang.
 		if !ext.AffectsStock {
+			if ext.Amount > 0 {
+				lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByItem(ctx, msg.ChatID, ext.ItemName, txn.ID, txnDate)
+			}
 			return nil
 		}
 
@@ -351,6 +358,10 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 				baseReply += fmt.Sprintf(" Estimasi habis dalam: %.0f hari.", duration)
 			}
 		}
+	}
+
+	if analysis := repurchaseAnalysis(txnDate, lastPurchase); analysis != "" {
+		baseReply += analysis
 	}
 
 	return baseReply, nil

@@ -29,20 +29,23 @@ func (e *AmbiguousInventoryError) Error() string {
 
 // ResolveInventoryItem mencocokkan nama barang hasil ekstraksi LLM ke
 // inventory dengan bertingkat:
-//  1. exact match;
-//  2. ILIKE search (substring, case-insensitive);
+//  1. exact match: nama → goods (case-insensitive) → inventory (chat+goods_id);
+//  2. ILIKE search via join goods (substring, case-insensitive);
 //  3. bila search mengembalikan beberapa kandidat, pilih kandidat yang
 //     namanya muncul utuh di pesan asli user.
 //
 // Ini menutup kasus classifier melepas ukuran dari nama barang: pesan
 // "pakai susu bmt 200g" diekstrak jadi item_name "susu bmt" (200g dianggap
 // jumlah pakai), padahal di inventory barangnya tercatat "susu bmt 200g".
-func ResolveInventoryItem(ctx context.Context, db *gorm.DB, invRepo repository.InventoryRepository, chatID, userMessage, itemName string) (*domain.Inventory, error) {
-	inv, err := invRepo.WithTx(db).GetByChatItem(ctx, chatID, itemName)
-	if err == nil {
-		return inv, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+func ResolveInventoryItem(ctx context.Context, db *gorm.DB, goodsRepo repository.GoodsRepository, invRepo repository.InventoryRepository, chatID, userMessage, itemName string) (*domain.Inventory, error) {
+	// Exact: nama → master goods → inventory chat ini.
+	if goods, err := goodsRepo.WithTx(db).GetByName(ctx, itemName); err == nil {
+		if inv, ierr := invRepo.WithTx(db).GetByChatGoods(ctx, chatID, goods.ID); ierr == nil {
+			return inv, nil
+		} else if !errors.Is(ierr, gorm.ErrRecordNotFound) {
+			return nil, ierr
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
@@ -62,7 +65,7 @@ func ResolveInventoryItem(ctx context.Context, db *gorm.DB, invRepo repository.I
 	lower := strings.ToLower(userMessage)
 	var matched []domain.Inventory
 	for i := range results {
-		if strings.Contains(lower, strings.ToLower(results[i].ItemName)) {
+		if strings.Contains(lower, strings.ToLower(results[i].Name())) {
 			matched = append(matched, results[i])
 		}
 	}
@@ -74,11 +77,15 @@ func ResolveInventoryItem(ctx context.Context, db *gorm.DB, invRepo repository.I
 	if len(candidates) == 0 {
 		candidates = results
 	}
-	names := make([]string, len(candidates))
-	for i, it := range candidates {
-		names[i] = it.ItemName
+	return nil, &AmbiguousInventoryError{Names: inventoryNames(candidates), Items: candidates}
+}
+
+func inventoryNames(items []domain.Inventory) []string {
+	names := make([]string, len(items))
+	for i, it := range items {
+		names[i] = it.Name()
 	}
-	return nil, &AmbiguousInventoryError{Names: names, Items: candidates}
+	return names
 }
 
 // FormatItemChoice merangkai daftar kandidat barang bernomor siap kirim.
@@ -86,7 +93,7 @@ func FormatItemChoice(query string, amb *AmbiguousInventoryError) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "🔍 \"%s\" ketemu beberapa barang — pilih nomornya ya:\n", query)
 	for i, it := range amb.Items {
-		fmt.Fprintf(&b, "%d. %s (sisa %g %s)\n", i+1, it.ItemName, it.StockQty, it.Unit)
+		fmt.Fprintf(&b, "%d. %s (sisa %g %s)\n", i+1, it.Name(), it.StockQty, it.Unit)
 	}
 	fmt.Fprintf(&b, "\nBalas nomornya (1-%d).", len(amb.Items))
 	return b.String()
@@ -94,9 +101,5 @@ func FormatItemChoice(query string, amb *AmbiguousInventoryError) string {
 
 // ItemOptionNames mengembalikan nama kandidat (untuk Options di PendingChoice).
 func ItemOptionNames(amb *AmbiguousInventoryError) []string {
-	names := make([]string, len(amb.Items))
-	for i, it := range amb.Items {
-		names[i] = it.ItemName
-	}
-	return names
+	return inventoryNames(amb.Items)
 }

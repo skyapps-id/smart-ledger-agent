@@ -37,6 +37,7 @@ func (s *mockSender) Enqueue(msg sender.Message) bool {
 
 func newReasonerTestAgent(t *testing.T, reasoner llm.ConversionReasoner) (*consumptionAgent, *gorm.DB, *mockSender, *agent.PendingConfirms) {
 	db := setupCompleteFlowTestDB(t)
+	goodsRepo := repository.NewGoodsRepository(db)
 	invRepo := repository.NewInventoryRepository(db)
 	logRepo := repository.NewStockLogRepository(db)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
@@ -46,6 +47,7 @@ func newReasonerTestAgent(t *testing.T, reasoner llm.ConversionReasoner) (*consu
 
 	ag := &consumptionAgent{
 		db:                 db,
+		goodsRepo:          goodsRepo,
 		invRepo:            invRepo,
 		logRepo:            logRepo,
 		consumptionService: svc,
@@ -63,21 +65,20 @@ func TestResolveAmbiguousConversionLLMConvert(t *testing.T) {
 	ag, db, senderMock, _ := newReasonerTestAgent(t, reasoner)
 	ctx := context.Background()
 
-	inv := &domain.Inventory{ChatID: "c1", ItemName: "le minerale galon", StockQty: 1, Unit: "galon"}
-	require.NoError(t, db.Create(inv).Error)
+	inv := seedGoodsInventory(t, db, "c1", "le minerale galon", 1, "galon")
 
 	msg := entity.IncomingMessage{ChatID: "c1", Text: "Pakai le minerale 3lt"}
-	stop, qty, unit, _, err := ag.resolveAmbiguousConversion(ctx, msg, inv, inv.ItemName, 3, "lt", "", 0)
+	stop, qty, unit, _, err := ag.resolveAmbiguousConversion(ctx, msg, inv, inv.Name(), 3, "lt", "", 0)
 	require.NoError(t, err)
 	assert.False(t, stop, "harus lanjut tanpa bertanya")
 	assert.Equal(t, 0.2, qty)
 	assert.Equal(t, "galon", unit)
 	assert.Empty(t, senderMock.msgs, "tidak ada pertanyaan terkirim")
 
-	var fresh domain.Inventory
-	require.NoError(t, db.First(&fresh, inv.ID).Error)
-	assert.Equal(t, float64(15), fresh.ContentSize)
-	assert.Equal(t, "lt", fresh.ContentUnit)
+	var fresh domain.Good
+	require.NoError(t, db.First(&fresh, inv.GoodsID).Error)
+	assert.Equal(t, float64(15), fresh.FactorUom)
+	assert.Equal(t, "lt", fresh.ConversionUom)
 }
 
 func TestResolveAmbiguousConversionLLMAsk(t *testing.T) {
@@ -85,11 +86,10 @@ func TestResolveAmbiguousConversionLLMAsk(t *testing.T) {
 	ag, db, senderMock, pending := newReasonerTestAgent(t, reasoner)
 	ctx := context.Background()
 
-	inv := &domain.Inventory{ChatID: "c1", ItemName: "le minerale galon", StockQty: 1, Unit: "galon"}
-	require.NoError(t, db.Create(inv).Error)
+	inv := seedGoodsInventory(t, db, "c1", "le minerale galon", 1, "galon")
 
 	msg := entity.IncomingMessage{ChatID: "c1", Text: "Pakai le minerale 3lt"}
-	stop, _, _, _, err := ag.resolveAmbiguousConversion(ctx, msg, inv, inv.ItemName, 3, "lt", "", 0)
+	stop, _, _, _, err := ag.resolveAmbiguousConversion(ctx, msg, inv, inv.Name(), 3, "lt", "", 0)
 	require.NoError(t, err)
 	assert.True(t, stop)
 	require.Len(t, senderMock.msgs, 1)
@@ -104,11 +104,10 @@ func TestResolveAmbiguousConversionFallbackTemplate(t *testing.T) {
 	ag, db, senderMock, _ := newReasonerTestAgent(t, nil) // tanpa reasoner → template
 	ctx := context.Background()
 
-	inv := &domain.Inventory{ChatID: "c1", ItemName: "le minerale galon", StockQty: 1, Unit: "galon"}
-	require.NoError(t, db.Create(inv).Error)
+	inv := seedGoodsInventory(t, db, "c1", "le minerale galon", 1, "galon")
 
 	msg := entity.IncomingMessage{ChatID: "c1", Text: "Pakai le minerale 3lt"}
-	stop, _, _, _, err := ag.resolveAmbiguousConversion(ctx, msg, inv, inv.ItemName, 3, "lt", "", 0)
+	stop, _, _, _, err := ag.resolveAmbiguousConversion(ctx, msg, inv, inv.Name(), 3, "lt", "", 0)
 	require.NoError(t, err)
 	assert.True(t, stop)
 	require.Len(t, senderMock.msgs, 1)

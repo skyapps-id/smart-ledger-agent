@@ -51,6 +51,7 @@ func main() {
 	// ── Repositories ──
 	chatRepo := repository.NewChatRepository(db)
 	txnRepo := repository.NewTransactionRepository(db)
+	goodsRepo := repository.NewGoodsRepository(db)
 	invRepo := repository.NewInventoryRepository(db)
 	logRepo := repository.NewStockLogRepository(db)
 	consumptionCycleRepo := repository.NewConsumptionCycleRepository(db)
@@ -93,9 +94,9 @@ func main() {
 	pendingConfirms := agent.NewPendingConfirms()
 
 	agents := []agent.SubAgent{
-		transaction.NewAgent(db, txnRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
-		stock.NewAgent(db, invRepo, txnRepo, replySender, logger),
-		consumption.NewAgentWithReasoner(db, invRepo, logRepo, consumptionService, invCache, pendingConfirms, conversionReasoner, replySender, logger),
+		transaction.NewAgent(db, txnRepo, goodsRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
+		stock.NewAgent(db, goodsRepo, invRepo, txnRepo, replySender, logger),
+		consumption.NewAgentWithReasoner(db, goodsRepo, invRepo, logRepo, consumptionService, invCache, pendingConfirms, conversionReasoner, replySender, logger),
 		report.NewAgent(db, txnRepo, logRepo, replySender, logger),
 		system.NewAgent(db, chatRepo, txnRepo, replySender, logger),
 	}

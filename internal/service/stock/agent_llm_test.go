@@ -190,8 +190,8 @@ func TestFullStockQueryFlow(t *testing.T) {
 	// Step 5: Response Formatting
 	t.Log("📝 Step 4: Response Formatting")
 	mockItems := []domain.Inventory{
-		{ItemName: "Kecap Manis", StockQty: 5.0, Unit: "botol"},
-		{ItemName: "Kecap Asin", StockQty: 3.0, Unit: "botol"},
+		{Good: &domain.Good{Name: "Kecap Manis"}, StockQty: 5.0, Unit: "botol"},
+		{Good: &domain.Good{Name: "Kecap Asin"}, StockQty: 3.0, Unit: "botol"},
 	}
 
 	response := formatStock(mockItems, itemFilter, nil)

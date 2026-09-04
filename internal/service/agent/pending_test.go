@@ -42,10 +42,10 @@ func TestPendingResolveByNumber(t *testing.T) {
 func TestPendingResolveFreeText(t *testing.T) {
 	p := newTestPending()
 	p.Set("c1", PendingChoice{
-		Action:      domain.ActionConsumption,
-		Params:      map[string]interface{}{"consumption_action": "use", "item_name": "le minerale galon", "usage_qty": 3.0, "usage_unit": "lt"},
-		FreeTextKey: "conversion_answer",
-		Options:     []string{}, // bukan pilihan bernomor
+		Action:       domain.ActionConsumption,
+		Params:       map[string]interface{}{"consumption_action": "use", "item_name": "le minerale galon", "usage_qty": 3.0, "usage_unit": "lt"},
+		FreeTextKey:  "conversion_answer",
+		Options:      []string{}, // bukan pilihan bernomor
 		OriginalText: "Pakai le minerale 3lt",
 	})
 

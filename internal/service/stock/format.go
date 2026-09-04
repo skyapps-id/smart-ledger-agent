@@ -25,13 +25,13 @@ func formatStock(items []domain.Inventory, itemFilter string, lastPurchases map[
 		b.WriteString("Stok saat ini:\n")
 	}
 	for _, it := range items {
-		if last, ok := lastPurchases[it.ItemName]; ok && last != nil {
+		if last, ok := lastPurchases[it.Name()]; ok && last != nil {
 			fmt.Fprintf(&b, "- %s: %g %s (beli terakhir: Rp%s, %s)\n",
-				it.ItemName, it.StockQty, it.Unit,
+				it.Name(), it.StockQty, it.Unit,
 				agent.FormatRupiah(last.Amount), last.TransactionDate.Format("02/01"))
 			continue
 		}
-		fmt.Fprintf(&b, "- %s: %g %s\n", it.ItemName, it.StockQty, it.Unit)
+		fmt.Fprintf(&b, "- %s: %g %s\n", it.Name(), it.StockQty, it.Unit)
 	}
 	return b.String()
 }

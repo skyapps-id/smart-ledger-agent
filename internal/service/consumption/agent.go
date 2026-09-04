@@ -22,6 +22,7 @@ import (
 // history, info, list) sebagai action LLM `consumption`.
 type consumptionAgent struct {
 	db                 *gorm.DB
+	goodsRepo          repository.GoodsRepository
 	invRepo            repository.InventoryRepository
 	logRepo            repository.StockLogRepository
 	consumptionService *Service
@@ -40,6 +41,7 @@ type consumptionAgent struct {
 
 func NewAgent(
 	db *gorm.DB,
+	goodsRepo repository.GoodsRepository,
 	invRepo repository.InventoryRepository,
 	logRepo repository.StockLogRepository,
 	consumptionService *Service,
@@ -48,13 +50,14 @@ func NewAgent(
 	sender agent.MessageSender,
 	logger *slog.Logger,
 ) agent.SubAgent {
-	return NewAgentWithReasoner(db, invRepo, logRepo, consumptionService, invCache, pending, nil, sender, logger)
+	return NewAgentWithReasoner(db, goodsRepo, invRepo, logRepo, consumptionService, invCache, pending, nil, sender, logger)
 }
 
 // NewAgentWithReasoner seperti NewAgent plus penalar konversi LLM untuk
 // jalur ambigu (dipakai composition root di cmd/server).
 func NewAgentWithReasoner(
 	db *gorm.DB,
+	goodsRepo repository.GoodsRepository,
 	invRepo repository.InventoryRepository,
 	logRepo repository.StockLogRepository,
 	consumptionService *Service,
@@ -66,6 +69,7 @@ func NewAgentWithReasoner(
 ) agent.SubAgent {
 	return &consumptionAgent{
 		db:                 db,
+		goodsRepo:          goodsRepo,
 		invRepo:            invRepo,
 		logRepo:            logRepo,
 		consumptionService: consumptionService,
@@ -108,11 +112,15 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 		actionType = "info" // default action
 	}
 
-	// Resolve ke nama resmi inventory sebelum operasi apapun: classifier
-	// meniru kapitalisasi user ("Susu BMT 200g") sedangkan cycle/inventory
-	// tersimpan lowercase ("susu bmt 200g") — query exact match akan gagal.
-	if inv, rerr := agent.ResolveInventoryItem(ctx, a.db, a.invRepo, msg.ChatID, msg.Text, itemName); rerr == nil {
-		itemName = inv.ItemName
+	// Resolve nama barang hasil LLM ke inventory (via relasi goods): exact →
+	// ILIKE → saring via pesan asli. Classifier meniru kapitalisasi user
+	// ("Susu BMT 200g") sedangkan master goods tersimpan lowercase — query
+	// exact match akan gagal. goods non-nil hanya bila resolve sukses; branch
+	// tanpa goods membalas pesan informatif "tidak ada siklus aktif".
+	var goods *domain.Good
+	if inv, rerr := agent.ResolveInventoryItem(ctx, a.db, a.goodsRepo, a.invRepo, msg.ChatID, msg.Text, itemName); rerr == nil {
+		itemName = inv.Name()
+		goods = inv.Good
 	} else {
 		var amb *agent.AmbiguousInventoryError
 		if errors.As(rerr, &amb) {
@@ -121,7 +129,7 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 			return a.confirmItemChoice(ctx, msg, params, amb, intentCost)
 		}
 		// Item tidak ada di inventory / gagal DB: lanjut dengan nama apa adanya —
-		// service akan membalas "tidak ada siklus aktif" yang informatif.
+		// branch yang butuh goods akan membalas pesan informatif.
 	}
 
 	var result string
@@ -185,8 +193,12 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 			updateUnit = "ml" // default unit
 		}
 
+		if goods == nil {
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal update konsumsi: tidak ada siklus aktif untuk %s (batch %s)", itemName, batchNumber), intentCost)
+		}
+
 		// Update consumption cycle
-		result, err = a.consumptionService.UpdateConsumption(ctx, msg.ChatID, itemName, batchNumber, updateQty, updateUnit)
+		result, err = a.consumptionService.UpdateConsumption(ctx, msg.ChatID, goods, batchNumber, updateQty, updateUnit)
 		if err != nil {
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal update konsumsi: %v", err), intentCost)
 		}
@@ -198,8 +210,12 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 		batchNumber, _ := params["batch_number"].(string)
 		a.log.InfoContext(ctx, "consumption complete", "item", itemName, "batch", batchNumber)
 
+		if goods == nil {
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal menyelesaikan consumption: tidak ada siklus aktif untuk %s", itemName), intentCost)
+		}
+
 		// Beberapa batch aktif tanpa batch disebut → minta konfirmasi dulu.
-		if stop, err := a.confirmBatchIfNeeded(ctx, msg, "complete", params, itemName, batchNumber, intentCost); stop {
+		if stop, err := a.confirmBatchIfNeeded(ctx, msg, "complete", params, goods, batchNumber, intentCost); stop {
 			return err
 		}
 
@@ -213,9 +229,9 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 				return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, "Format tanggal habis tidak valid (pakai DD/MM atau YYYY-MM-DD).", intentCost)
 			}
 			endAt = parsed
-			result, err = a.consumptionService.CompleteUsageWithDate(ctx, msg.ChatID, itemName, batchNumber, endAt)
+			result, err = a.consumptionService.CompleteUsageWithDate(ctx, msg.ChatID, goods, batchNumber, endAt)
 		} else {
-			result, err = a.consumptionService.CompleteUsage(ctx, msg.ChatID, itemName, batchNumber)
+			result, err = a.consumptionService.CompleteUsage(ctx, msg.ChatID, goods, batchNumber)
 		}
 		if err != nil {
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal menyelesaikan consumption: %v", err), intentCost)
@@ -274,7 +290,11 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 			limit = int(limitParam)
 		}
 
-		result, err = a.consumptionService.GetHistory(ctx, msg.ChatID, itemName, limit)
+		if goods == nil {
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Belum ada data konsumsi untuk %s.", itemName), intentCost)
+		}
+
+		result, err = a.consumptionService.GetHistory(ctx, msg.ChatID, goods, limit)
 		if err != nil {
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal mengambil history: %v", err), intentCost)
 		}
@@ -285,12 +305,16 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 		// Tampilkan info konsumsi aktif untuk item spesifik
 		batchNumber, _ := params["batch_number"].(string)
 
+		if goods == nil {
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Tidak ada consumption cycle aktif untuk '%s'. Ketik 'barang aktif' untuk melihat semua item yang sedang dikonsumsi.", itemName), intentCost)
+		}
+
 		// Beberapa batch aktif tanpa batch disebut → minta konfirmasi dulu.
-		if stop, err := a.confirmBatchIfNeeded(ctx, msg, "info", params, itemName, batchNumber, intentCost); stop {
+		if stop, err := a.confirmBatchIfNeeded(ctx, msg, "info", params, goods, batchNumber, intentCost); stop {
 			return err
 		}
 
-		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, itemName, batchNumber)
+		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, goods, batchNumber)
 		if err != nil {
 			// Jika item tidak ditemukan, tarkan pesan yang lebih informatif
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Tidak ada consumption cycle aktif untuk '%s'. Ketik 'barang aktif' untuk melihat semua item yang sedang dikonsumsi.", itemName), intentCost)
@@ -310,12 +334,20 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 		// Default: coba info dulu, jika tidak ada maka list active items
 		batchNumber, _ := params["batch_number"].(string)
 
+		if goods == nil {
+			result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
+			if err != nil {
+				return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal mengambil list active items: %v", err), intentCost)
+			}
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, result, intentCost)
+		}
+
 		// Beberapa batch aktif tanpa batch disebut → minta konfirmasi dulu.
-		if stop, err := a.confirmBatchIfNeeded(ctx, msg, "info", params, itemName, batchNumber, intentCost); stop {
+		if stop, err := a.confirmBatchIfNeeded(ctx, msg, "info", params, goods, batchNumber, intentCost); stop {
 			return err
 		}
 
-		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, itemName, batchNumber)
+		result, err = a.consumptionService.GetActiveCycleInfo(ctx, msg.ChatID, goods, batchNumber)
 		if err != nil {
 			// Jika tidak ada spesifik item, list semua active items
 			result, err = a.consumptionService.ListActiveItems(ctx, msg.ChatID)
@@ -333,7 +365,7 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 	// Resolve nama barang ke inventory: exact → ILIKE → saring via pesan asli.
 	// Classifier kadang melepas ukuran dari nama ("pakai susu bmt 200g" →
 	// item_name "susu bmt") padahal inventory menyimpan "susu bmt 200g".
-	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.invRepo, msg.ChatID, msg.Text, itemName)
+	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.goodsRepo, a.invRepo, msg.ChatID, msg.Text, itemName)
 	if err != nil {
 		var amb *agent.AmbiguousInventoryError
 		switch {
@@ -345,33 +377,36 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal cek inventaris: %v", err), intentCost)
 		}
 	}
-	// Gunakan nama resmi inventory untuk semua operasi berikutnya.
-	itemName = inv.ItemName
+	// Gunakan nama resmi barang (dari relasi goods) untuk semua operasi
+	// berikutnya, dan relasi goods untuk persistensi cycle.
+	itemName = inv.Name()
 
-		// Konversi jumlah pakai ke satuan inventory dengan prioritas: isi
-		// tersimpan (jawaban user sebelumnya) → isi di nama barang → pola
-		// "<kemasan> <isi>" di pesan. Isi yang baru diketahui disimpan agar
-		// pemakaian berikutnya stabil; bila tak bisa dikonversi dan isinya
-		// belum diketahui, tanya user dulu (jawaban bebas, mis. "15lt").
-		convQty, convUnit, learnedQty, learnedUnit, ok := ResolveUsageConversion(inv, usageQty, usageUnit, msg.Text)
-		if ok {
-			usageQty, usageUnit = convQty, convUnit
-			if learnedQty > 0 {
-				if err := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, learnedQty, learnedUnit); err != nil {
-					a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
-				}
+	// Konversi jumlah pakai ke satuan inventory dengan prioritas: isi
+	// tersimpan (jawaban user sebelumnya) → isi di nama barang → pola
+	// "<kemasan> <isi>" di pesan. Isi yang baru diketahui disimpan agar
+	// pemakaian berikutnya stabil; bila tak bisa dikonversi dan isinya
+	// belum diketahui, tanya user dulu (jawaban bebas, mis. "15lt").
+	convQty, convUnit, learnedQty, learnedUnit, ok := ResolveUsageConversion(inv, usageQty, usageUnit, msg.Text)
+	if ok {
+		usageQty, usageUnit = convQty, convUnit
+		if learnedQty > 0 {
+			// Promosikan faktor yang baru diketahui ke master goods agar
+			// pemakaian berikutnya (chat manapun) stabil.
+			if err := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, learnedUnit, learnedQty); err != nil {
+				a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
 			}
-		} else if ConversionQuestion(inv, usageUnit) != "" {
-			// Jalur ambigu: kode tidak tahu faktornya → LLM penalar menentukan
-			// (faktor eksplisit di pesan? pertanyaan natural? tidak relevan?),
-			// dengan fallback deterministik bila LLM gagal.
-			stop, newQty, newUnit, extraCost, rerr := a.resolveAmbiguousConversion(ctx, msg, inv, itemName, usageQty, usageUnit, usageDate, intentCost)
-			intentCost += extraCost
-			if stop {
-				return rerr
-			}
-			usageQty, usageUnit = newQty, newUnit
 		}
+	} else if ConversionQuestion(inv, usageUnit) != "" {
+		// Jalur ambigu: kode tidak tahu faktornya → LLM penalar menentukan
+		// (faktor eksplisit di pesan? pertanyaan natural? tidak relevan?),
+		// dengan fallback deterministik bila LLM gagal.
+		stop, newQty, newUnit, extraCost, rerr := a.resolveAmbiguousConversion(ctx, msg, inv, itemName, usageQty, usageUnit, usageDate, intentCost)
+		intentCost += extraCost
+		if stop {
+			return rerr
+		}
+		usageQty, usageUnit = newQty, newUnit
+	}
 
 	// Validasi stok cukup
 	if inv.StockQty < usageQty {
@@ -398,7 +433,7 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 
 		// Mulai consumption cycle: qty dalam SATUAN INVENTORY (pcs hasil
 		// konversi); StartUsage menurukan satuan dasar (gr/ml) dari nama barang.
-		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, itemName, usageQty, usageUnit, conversionFactor, usageDate)
+		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, inv.Good, usageQty, usageUnit, conversionFactor, usageDate)
 		if err != nil {
 			return err
 		}
@@ -417,13 +452,13 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 	a.invCache.Delete(msg.ChatID)
 
 	// Get updated stock dan active cycle untuk batch info
-	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, itemName)
+	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatGoods(ctx, msg.ChatID, inv.GoodsID)
 	if err != nil {
 		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("🔄 Pemakaian %s %.1f %s dicatat. Consumption cycle dimulai dengan auto-generated batch!", itemName, usageQty, usageUnit), intentCost)
 	}
 
 	// Get cycle info untuk menampilkan batch number
-	cycle, err := a.consumptionService.cycleRepo.GetActiveByItem(ctx, msg.ChatID, itemName)
+	cycle, err := a.consumptionService.cycleRepo.GetActiveByGoods(ctx, msg.ChatID, inv.GoodsID)
 	if err != nil {
 		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf(
 			"🔄 Pemakaian %s %.1f %s dicatat.\n✅ Consumption cycle: OPEN\n📦 Sisa stok: %.1f %s",
@@ -448,7 +483,7 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 // Return stop=true bila reply sudah dikirim (format tidak dikenali /
 // item tidak ketemu) sehingga aksi use dihentikan.
 func (a *consumptionAgent) applyConversionAnswer(ctx context.Context, msg entity.IncomingMessage, itemName, answer string, intentCost float64) (bool, error) {
-	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.invRepo, msg.ChatID, msg.Text, itemName)
+	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.goodsRepo, a.invRepo, msg.ChatID, msg.Text, itemName)
 	if err != nil {
 		return true, agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
 			fmt.Sprintf("Barang '%s' tidak ditemukan di inventaris.", itemName), intentCost)
@@ -457,7 +492,7 @@ func (a *consumptionAgent) applyConversionAnswer(ctx context.Context, msg entity
 	qty, unit := extractSizeFromItemName(answer)
 	if qty <= 0 && a.reasoner != nil {
 		input := fmt.Sprintf("Pesan user: %q\nBarang: %q (stok dalam satuan: %s)\nPemakaian: dalam satuan lain, menunggu faktor konversi",
-			answer, inv.ItemName, inv.Unit)
+			answer, inv.Name(), inv.Unit)
 		reasoning, usage, rerr := a.reasoner.ReasonConversion(ctx, conversionReasonPrompt, input, msg.ChatID)
 		if rerr != nil {
 			a.log.ErrorContext(ctx, "gagal reason jawaban konversi", "err", rerr)
@@ -470,10 +505,10 @@ func (a *consumptionAgent) applyConversionAnswer(ctx context.Context, msg entity
 		return true, agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
 			"Format belum jelas. Ketik angka + satuan, contoh: 15lt atau 48pcs", intentCost)
 	}
-	if err := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, qty, unit); err != nil {
+	if err := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, unit, qty); err != nil {
 		a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
 	}
-	a.log.InfoContext(ctx, "faktor konversi dipelajari", "item", inv.ItemName, "content", qty, "unit", unit)
+	a.log.InfoContext(ctx, "faktor konversi dipelajari", "item", inv.Name(), "content", qty, "unit", unit)
 	return false, nil
 }
 
@@ -491,7 +526,7 @@ func (a *consumptionAgent) resolveAmbiguousConversion(
 
 	if a.reasoner != nil {
 		input := fmt.Sprintf("Pesan user: %q\nBarang: %q (stok dalam satuan: %s)\nPemakaian: %g %s",
-			msg.Text, inv.ItemName, inv.Unit, usageQty, usageUnit)
+			msg.Text, inv.Name(), inv.Unit, usageQty, usageUnit)
 		reasoning, usage, rerr := a.reasoner.ReasonConversion(ctx, conversionReasonPrompt, input, msg.ChatID)
 		if rerr != nil {
 			a.log.ErrorContext(ctx, "gagal reason konversi, fallback template", "err", rerr)
@@ -500,11 +535,11 @@ func (a *consumptionAgent) resolveAmbiguousConversion(
 			switch reasoning.Action {
 			case "convert":
 				if q, u, okC := convertByContent(inv, reasoning.ContentQty, reasoning.ContentUnit, usageQty, usageUnit); okC {
-					if uerr := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, reasoning.ContentQty, reasoning.ContentUnit); uerr != nil {
+					if uerr := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, reasoning.ContentUnit, reasoning.ContentQty); uerr != nil {
 						a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", uerr)
 					}
 					a.log.InfoContext(ctx, "faktor konversi dari penalaran LLM",
-						"item", inv.ItemName, "content", reasoning.ContentQty, "unit", reasoning.ContentUnit)
+						"item", inv.Name(), "content", reasoning.ContentQty, "unit", reasoning.ContentUnit)
 					return false, q, u, extraCost, nil
 				}
 			case "ask":
@@ -539,12 +574,13 @@ func (a *consumptionAgent) resolveAmbiguousConversion(
 // tapi user tidak menyebut batch: daftar batchnya dan minta konfirmasi
 // alih-alih menebak cycle terbaru. Return (true, err) bila permintaan
 // konfirmasi sudah terkirim — pemrosesan aksi harus berhenti.
-func (a *consumptionAgent) confirmBatchIfNeeded(ctx context.Context, msg entity.IncomingMessage, actionType string, params map[string]interface{}, itemName, batchNumber string, intentCost float64) (bool, error) {
-	if batchNumber != "" {
+func (a *consumptionAgent) confirmBatchIfNeeded(ctx context.Context, msg entity.IncomingMessage, actionType string, params map[string]interface{}, goods *domain.Good, batchNumber string, intentCost float64) (bool, error) {
+	if batchNumber != "" || goods == nil {
 		return false, nil
 	}
 
-	cycles, err := a.consumptionService.cycleRepo.ListActiveByItem(ctx, msg.ChatID, itemName)
+	itemName := goods.Name
+	cycles, err := a.consumptionService.cycleRepo.ListActiveByGoods(ctx, msg.ChatID, goods.ID)
 	if err != nil || len(cycles) <= 1 {
 		// 0 atau 1 batch: lanjut sebagaimana mestinya — service akan membalas
 		// "tidak ada siklus aktif" bila memang kosong.
@@ -591,10 +627,7 @@ func (a *consumptionAgent) confirmBatchIfNeeded(ctx context.Context, msg entity.
 // daftarkan konfirmasi — jawaban "1"/"2" di-resume tanpa LLM hop dengan
 // params asli + item terpilih.
 func (a *consumptionAgent) confirmItemChoice(ctx context.Context, msg entity.IncomingMessage, params map[string]interface{}, amb *agent.AmbiguousInventoryError, intentCost float64) error {
-	options := make([]string, len(amb.Items))
-	for i, it := range amb.Items {
-		options[i] = it.ItemName
-	}
+	options := agent.ItemOptionNames(amb)
 
 	// Params pesan asli dibawa; item_name akan ditimpa pilihan user.
 	pendingParams := map[string]interface{}{}

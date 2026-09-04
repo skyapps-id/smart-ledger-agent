@@ -135,12 +135,21 @@ func contentFromMessage(inv *domain.Inventory, message string) (float64, string,
 	return contentQty, contentUnit, true
 }
 
+// goodsFactor mengembalikan faktor konversi tersimpan pada master goods
+// (dipelajari dari user): 1 inv.Unit = factor conversionUom.
+func goodsFactor(inv *domain.Inventory) (float64, string) {
+	if inv == nil || inv.Good == nil {
+		return 0, ""
+	}
+	return inv.Good.FactorUom, inv.Good.ConversionUom
+}
+
 // ResolveUsageConversion mengonversi pemakaian ke satuan inventory dengan
-// urutan prioritas: (1) konversi skala se-dimensi, (2) isi tersimpan di
-// inventory (dipelajari dari jawaban user), (3) isi dari nama barang,
+// urutan prioritas: (1) konversi skala se-dimensi, (2) faktor tersimpan di
+// master goods (dipelajari dari jawaban user), (3) isi dari nama barang,
 // (4) pola "<kemasan> <isi>" pada pesan. Mengembalikan learnedQty/learnedUnit
 // = isi yang BARU diketahui dari nama/pesan agar caller menyimpannya ke
-// inventory (pemakaian berikutnya stabil, tidak bergantung pola pesan).
+// master goods (pemakaian berikutnya stabil, tidak bergantung pola pesan).
 func ResolveUsageConversion(inv *domain.Inventory, qty float64, unit, message string) (convQty float64, convUnit string, learnedQty float64, learnedUnit string, ok bool) {
 	if inv == nil {
 		return qty, unit, 0, "", false
@@ -148,10 +157,12 @@ func ResolveUsageConversion(inv *domain.Inventory, qty float64, unit, message st
 	if q, u, okC := convertScale(inv, qty, unit); okC {
 		return q, u, 0, "", true
 	}
-	if q, u, okC := convertByContent(inv, inv.ContentSize, inv.ContentUnit, qty, unit); okC {
-		return q, u, 0, "", true
+	if factorQty, factorUnit := goodsFactor(inv); factorQty > 0 {
+		if q, u, okC := convertByContent(inv, factorQty, factorUnit, qty, unit); okC {
+			return q, u, 0, "", true
+		}
 	}
-	if perQty, perUnit := extractSizeFromItemName(inv.ItemName); perQty > 0 {
+	if perQty, perUnit := extractSizeFromItemName(inv.Name()); perQty > 0 {
 		if q, u, okC := convertByContent(inv, perQty, perUnit, qty, unit); okC {
 			return q, u, perQty, perUnit, true
 		}
@@ -182,12 +193,12 @@ func ConversionQuestion(inv *domain.Inventory, usageUnit string) string {
 	if _, _, isUsageBase := unitToBase(u, 1); !isUsageBase {
 		return ""
 	}
-	if inv.ContentSize > 0 && inv.ContentUnit != "" {
+	if factorQty, factorUnit := goodsFactor(inv); factorQty > 0 && factorUnit != "" {
 		return ""
 	}
 	return fmt.Sprintf(
 		"Stok %s tercatat dalam satuan %s. 1 %s setara berapa %s? Balas dengan angka+satuan (contoh: 15%s)",
-		inv.ItemName, invUnit, invUnit, u, u,
+		inv.Name(), invUnit, invUnit, u, u,
 	)
 }
 
@@ -202,11 +213,11 @@ func FormatQtyForDisplay(qtyBase float64, baseUnit, itemName, purchaseUnit strin
 	}
 	if _, raw := extractSizeFromItemName(itemName); raw != "" {
 		if b, val, ok := unitToBase(raw, 1); ok && b == baseUnit && val > 0 {
-			return format(qtyBase/val), raw
+			return format(qtyBase / val), raw
 		}
 	}
 	if b, val, ok := unitToBase(strings.ToLower(strings.TrimSpace(purchaseUnit)), 1); ok && b == baseUnit && val > 0 {
-		return format(qtyBase/val), strings.TrimSpace(purchaseUnit)
+		return format(qtyBase / val), strings.TrimSpace(purchaseUnit)
 	}
 	return format(qtyBase), baseUnit
 }
@@ -219,7 +230,7 @@ func ConvertToInventoryUnit(inv *domain.Inventory, qty float64, unit string) (fl
 		return q, u
 	}
 	if inv != nil {
-		if perQty, perUnit := extractSizeFromItemName(inv.ItemName); perQty > 0 {
+		if perQty, perUnit := extractSizeFromItemName(inv.Name()); perQty > 0 {
 			if q, u, ok := convertByContent(inv, perQty, perUnit, qty, unit); ok {
 				return q, u
 			}

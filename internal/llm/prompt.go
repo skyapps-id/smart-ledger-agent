@@ -51,7 +51,7 @@ func BuildInventoryPrompt(items []domain.Inventory) string {
 	var b strings.Builder
 	b.WriteString("\n\n[INVENTORY CHAT INI]\n")
 	for _, it := range truncated {
-		fmt.Fprintf(&b, "- %s (stok: %g %s)\n", it.ItemName, it.StockQty, it.Unit)
+		fmt.Fprintf(&b, "- %s (stok: %g %s)\n", it.Name(), it.StockQty, it.Unit)
 	}
 	if suffix != "" {
 		b.WriteString(suffix)

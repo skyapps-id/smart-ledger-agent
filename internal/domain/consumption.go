@@ -15,10 +15,12 @@ const (
 
 // ConsumptionCycle mencatat siklus konsumsi barang dari pembelian sampai habis.
 // Setiap siklus merepresentasikan satu periode konsumsi lengkap.
+// Direlasikan ke master goods via GoodsID — BUKAN lagi via nama barang.
 type ConsumptionCycle struct {
 	ID               int64                  `gorm:"primaryKey;autoIncrement" json:"id"`
 	ChatID           string                 `gorm:"size:64;index" json:"chat_id"`
-	ItemName         string                 `gorm:"size:128;index" json:"item_name"`
+	GoodsID          int64                  `gorm:"index" json:"goods_id"`
+	Good             *Good                  `gorm:"foreignKey:GoodsID" json:"good,omitempty"`
 	BatchNumber      string                 `gorm:"size:64;index" json:"batch_number,omitempty"` // untuk tracking per batch
 	StartDate        time.Time              `gorm:"type:date;index" json:"start_date"`
 	EndDate          *time.Time             `gorm:"type:date" json:"end_date,omitempty"`
@@ -34,3 +36,12 @@ type ConsumptionCycle struct {
 }
 
 func (ConsumptionCycle) TableName() string { return "consumption_cycles" }
+
+// Name mengembalikan nama barang dari relasi goods (display). Kosong bila
+// relasi tidak di-preload — pastikan repo selalu preload.
+func (c ConsumptionCycle) Name() string {
+	if c.Good == nil {
+		return ""
+	}
+	return c.Good.Name
+}

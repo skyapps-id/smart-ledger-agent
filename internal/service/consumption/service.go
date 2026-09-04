@@ -33,18 +33,18 @@ func NewService(db *gorm.DB, cycleRepo repository.ConsumptionCycleRepository, lo
 }
 
 // StartCycle memulai siklus konsumsi baru ketika pembelian terjadi.
-func (s *Service) StartCycle(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64) (*domain.ConsumptionCycle, error) {
-	return s.StartCycleWithDate(ctx, chatID, itemName, purchaseQty, purchaseUnit, conversionFactor, time.Now())
+func (s *Service) StartCycle(ctx context.Context, chatID string, goods *domain.Good, purchaseQty float64, purchaseUnit string, conversionFactor float64) (*domain.ConsumptionCycle, error) {
+	return s.StartCycleWithDate(ctx, chatID, goods, purchaseQty, purchaseUnit, conversionFactor, time.Now())
 }
 
 // StartCycleWithDate memulai siklus konsumsi baru dengan tanggal pembelian spesifik.
-func (s *Service) StartCycleWithDate(ctx context.Context, chatID, itemName string, purchaseQty float64, purchaseUnit string, conversionFactor float64, purchaseDate time.Time) (*domain.ConsumptionCycle, error) {
+func (s *Service) StartCycleWithDate(ctx context.Context, chatID string, goods *domain.Good, purchaseQty float64, purchaseUnit string, conversionFactor float64, purchaseDate time.Time) (*domain.ConsumptionCycle, error) {
 	// Determine smallest unit based on purchase unit
 	smallestUnit := determineSmallestUnit(purchaseUnit)
 
 	cycle := &domain.ConsumptionCycle{
 		ChatID:           chatID,
-		ItemName:         itemName,
+		GoodsID:          goods.ID,
 		StartDate:        purchaseDate,
 		PurchaseQty:      purchaseQty,
 		PurchaseUnit:     purchaseUnit,
@@ -58,7 +58,7 @@ func (s *Service) StartCycleWithDate(ctx context.Context, chatID, itemName strin
 		return nil, fmt.Errorf("gagal membuat consumption cycle: %w", err)
 	}
 
-	s.log.InfoContext(ctx, "consumption cycle dibuat", "item", itemName, "qty", purchaseQty, "date", purchaseDate)
+	s.log.InfoContext(ctx, "consumption cycle dibuat", "item", goods.Name, "qty", purchaseQty, "date", purchaseDate)
 	return cycle, nil
 }
 
@@ -172,7 +172,8 @@ func determineSmallestUnitFromName(itemName string) string {
 
 // StartUsage memulai pemakaian item (saat user bilang "pakai susu 400gr").
 // Ini akan membuat consumption cycle baru dengan auto-generated batch number.
-func (s *Service) StartUsage(ctx context.Context, chatID, itemName string, usageQty float64, usageUnit string, conversionFactor float64, usageDate string) (*domain.ConsumptionCycle, error) {
+func (s *Service) StartUsage(ctx context.Context, chatID string, goods *domain.Good, usageQty float64, usageUnit string, conversionFactor float64, usageDate string) (*domain.ConsumptionCycle, error) {
+	itemName := goods.Name
 	// Auto-generate batch number
 	batchNumber := generateBatchNumber()
 
@@ -212,7 +213,7 @@ func (s *Service) StartUsage(ctx context.Context, chatID, itemName string, usage
 	// Gunakan data inventory untuk PurchaseQty/PurchaseUnit agar tracking akurat
 	cycle := &domain.ConsumptionCycle{
 		ChatID:           chatID,
-		ItemName:         itemName,
+		GoodsID:          goods.ID,
 		BatchNumber:      batchNumber,
 		StartDate:        startDate,
 		PurchaseQty:      usageQty,  // gunakan quantity dari inventory (pcs)
@@ -232,11 +233,11 @@ func (s *Service) StartUsage(ctx context.Context, chatID, itemName string, usage
 }
 
 // RecordConsumption mencatat pemakaian dan mengupdate siklus aktif.
-func (s *Service) RecordConsumption(ctx context.Context, chatID, itemName string, consumedQty float64, consumedUnit string) (*domain.ConsumptionCycle, error) {
+func (s *Service) RecordConsumption(ctx context.Context, chatID string, goods *domain.Good, consumedQty float64, consumedUnit string) (*domain.ConsumptionCycle, error) {
 	// Cek siklus aktif
-	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
+	cycle, err := s.cycleRepo.GetActiveByGoods(ctx, chatID, goods.ID)
 	if err != nil {
-		return nil, fmt.Errorf("tidak ada siklus aktif untuk %s: %w", itemName, err)
+		return nil, fmt.Errorf("tidak ada siklus aktif untuk %s: %w", goods.Name, err)
 	}
 
 	// Update consumed quantity
@@ -257,7 +258,7 @@ func (s *Service) RecordConsumption(ctx context.Context, chatID, itemName string
 		}
 
 		durationDays := time.Since(cycle.StartDate).Hours() / 24
-		s.log.InfoContext(ctx, "consumption cycle selesai", "item", itemName, "duration_days", durationDays)
+		s.log.InfoContext(ctx, "consumption cycle selesai", "item", goods.Name, "duration_days", durationDays)
 		return cycle, nil
 	}
 
@@ -265,27 +266,28 @@ func (s *Service) RecordConsumption(ctx context.Context, chatID, itemName string
 		return nil, fmt.Errorf("gagal update consumption cycle: %w", err)
 	}
 
-	s.log.DebugContext(ctx, "consumption diupdate", "item", itemName, "consumed_qty", consumedQty, "consumed_unit", consumedUnit)
+	s.log.DebugContext(ctx, "consumption diupdate", "item", goods.Name, "consumed_qty", consumedQty, "consumed_unit", consumedUnit)
 	return cycle, nil
 }
 
 // CompleteUsage menyelesaikan siklus konsumsi saat item habis ("susu sudah habis").
 // Menghitung durasi dan daily rate, lalu return laporan lengkap.
-func (s *Service) CompleteUsage(ctx context.Context, chatID, itemName, batchNumber string) (string, error) {
-	return s.CompleteUsageWithDate(ctx, chatID, itemName, batchNumber, time.Now())
+func (s *Service) CompleteUsage(ctx context.Context, chatID string, goods *domain.Good, batchNumber string) (string, error) {
+	return s.CompleteUsageWithDate(ctx, chatID, goods, batchNumber, time.Now())
 }
 
 // CompleteUsageWithDate seperti CompleteUsage tapi memakai tanggal habis
 // eksplisit dari user (mis. "habis 20/01") alih-alih waktu sekarang.
-func (s *Service) CompleteUsageWithDate(ctx context.Context, chatID, itemName, batchNumber string, endTime time.Time) (string, error) {
-	// Cari cycle aktif untuk item+batch ini
+func (s *Service) CompleteUsageWithDate(ctx context.Context, chatID string, goods *domain.Good, batchNumber string, endTime time.Time) (string, error) {
+	itemName := goods.Name
+	// Cari cycle aktif untuk barang+batch ini
 	var cycle *domain.ConsumptionCycle
 	var err error
 
 	if batchNumber != "" {
-		cycle, err = s.cycleRepo.GetActiveByItemAndBatch(ctx, chatID, itemName, batchNumber)
+		cycle, err = s.cycleRepo.GetActiveByGoodsAndBatch(ctx, chatID, goods.ID, batchNumber)
 	} else {
-		cycle, err = s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
+		cycle, err = s.cycleRepo.GetActiveByGoods(ctx, chatID, goods.ID)
 	}
 
 	if err != nil {
@@ -354,14 +356,15 @@ func (s *Service) CompleteUsageWithDate(ctx context.Context, chatID, itemName, b
 }
 
 // GetActiveCycleInfo mendapatkan informasi siklus aktif untuk analisa.
-func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID, itemName, batchNumber string) (string, error) {
+func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID string, goods *domain.Good, batchNumber string) (string, error) {
+	itemName := goods.Name
 	var cycle *domain.ConsumptionCycle
 	var err error
 
 	if batchNumber != "" {
-		cycle, err = s.cycleRepo.GetActiveByItemAndBatch(ctx, chatID, itemName, batchNumber)
+		cycle, err = s.cycleRepo.GetActiveByGoodsAndBatch(ctx, chatID, goods.ID, batchNumber)
 	} else {
-		cycle, err = s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
+		cycle, err = s.cycleRepo.GetActiveByGoods(ctx, chatID, goods.ID)
 	}
 
 	if err != nil {
@@ -429,7 +432,7 @@ func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID, itemName, batc
 		rateStr, rateUnitStr,
 		estimationDays,
 		cycle.Status,
-		cycle.ItemName, cycle.BatchNumber,
+		cycle.Name(), cycle.BatchNumber,
 	), nil
 }
 
@@ -461,21 +464,21 @@ func (s *Service) ListActiveItems(ctx context.Context, chatID string) (string, e
 		displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
 		if displayUnit == "gr" {
 			// Check if item name suggests liquid
-			displayUnit = determineSmallestUnitFromName(cycle.ItemName)
+			displayUnit = determineSmallestUnitFromName(cycle.Name())
 		}
 
-		itemLabel := cycle.ItemName
+		itemLabel := cycle.Name()
 		if cycle.BatchNumber != "" {
-			itemLabel = fmt.Sprintf("%s (%s)", cycle.ItemName, cycle.BatchNumber)
+			itemLabel = fmt.Sprintf("%s (%s)", cycle.Name(), cycle.BatchNumber)
 		}
 
 		// Extract actual quantity from item name for accurate display
-		displayQty := ExtractQuantityFromItemName(cycle.ItemName)
+		displayQty := ExtractQuantityFromItemName(cycle.Name())
 		if displayQty == 0 {
 			displayQty = totalInSmallestUnit // fallback ke calculated quantity
 		}
 
-		qtyStr, qtyUnitStr := FormatQtyForDisplay(displayQty, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
+		qtyStr, qtyUnitStr := FormatQtyForDisplay(displayQty, displayUnit, cycle.Name(), cycle.PurchaseUnit)
 
 		result += fmt.Sprintf(
 			"%d. %s\n   📦 %g %s (%s %s)\n   📅 Mulai: %s (%.0f hari lalu)\n\n",
@@ -491,8 +494,9 @@ func (s *Service) ListActiveItems(ctx context.Context, chatID string) (string, e
 }
 
 // GetHistory mendapatkan history siklus konsumsi untuk item tertentu.
-func (s *Service) GetHistory(ctx context.Context, chatID, itemName string, limit int) (string, error) {
-	cycles, err := s.cycleRepo.ListByChat(ctx, chatID, limit)
+func (s *Service) GetHistory(ctx context.Context, chatID string, goods *domain.Good, limit int) (string, error) {
+	itemName := goods.Name
+	cycles, err := s.cycleRepo.ListByDateRange(ctx, chatID, goods.ID, time.Time{}, time.Time{})
 	if err != nil {
 		return "", fmt.Errorf("gagal mengambil history: %w", err)
 	}
@@ -505,9 +509,6 @@ func (s *Service) GetHistory(ctx context.Context, chatID, itemName string, limit
 	result += fmt.Sprintf("📊 History Konsumsi: %s\n\n", itemName)
 
 	for i, cycle := range cycles {
-		if itemName != "" && cycle.ItemName != itemName {
-			continue
-		}
 
 		daysInUse := 0.0
 		if cycle.EndDate != nil {
@@ -530,9 +531,9 @@ func (s *Service) GetHistory(ctx context.Context, chatID, itemName string, limit
 			dailyConsumptionInSmallestUnit = totalConsumedInSmallestUnit / daysInUse
 		}
 
-		beliStr, beliUnitStr := FormatQtyForDisplay(totalPurchasedInSmallestUnit, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
-		terpakaiStr, terpakaiUnitStr := FormatQtyForDisplay(totalConsumedInSmallestUnit, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
-		rateStr, rateUnitStr := FormatQtyForDisplay(dailyConsumptionInSmallestUnit, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
+		beliStr, beliUnitStr := FormatQtyForDisplay(totalPurchasedInSmallestUnit, displayUnit, cycle.Name(), cycle.PurchaseUnit)
+		terpakaiStr, terpakaiUnitStr := FormatQtyForDisplay(totalConsumedInSmallestUnit, displayUnit, cycle.Name(), cycle.PurchaseUnit)
+		rateStr, rateUnitStr := FormatQtyForDisplay(dailyConsumptionInSmallestUnit, displayUnit, cycle.Name(), cycle.PurchaseUnit)
 
 		result += fmt.Sprintf(
 			"%d. %s - %s\n",
@@ -553,8 +554,9 @@ func (s *Service) GetHistory(ctx context.Context, chatID, itemName string, limit
 }
 
 // CompleteCycleWithEndDate menyelesaikan siklus konsumsi dengan tanggal habis yang spesifik.
-func (s *Service) CompleteCycleWithEndDate(ctx context.Context, chatID, itemName string, endDate time.Time) (*domain.ConsumptionCycle, error) {
-	cycle, err := s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
+func (s *Service) CompleteCycleWithEndDate(ctx context.Context, chatID string, goods *domain.Good, endDate time.Time) (*domain.ConsumptionCycle, error) {
+	itemName := goods.Name
+	cycle, err := s.cycleRepo.GetActiveByGoods(ctx, chatID, goods.ID)
 	if err != nil {
 		return nil, fmt.Errorf("tidak ada siklus aktif untuk %s: %w", itemName, err)
 	}
@@ -630,15 +632,16 @@ func (s *Service) CalculateDailyConsumption(ctx context.Context, chatID, itemNam
 }
 
 // UpdateConsumption mengupdate nilai konsumsi untuk cycle yang sudah ada (koreksi data)
-func (s *Service) UpdateConsumption(ctx context.Context, chatID, itemName, batchNumber string, consumedQty float64, consumedUnit string) (string, error) {
-	// Cari cycle aktif untuk item+batch ini
+func (s *Service) UpdateConsumption(ctx context.Context, chatID string, goods *domain.Good, batchNumber string, consumedQty float64, consumedUnit string) (string, error) {
+	itemName := goods.Name
+	// Cari cycle aktif untuk barang+batch ini
 	var cycle *domain.ConsumptionCycle
 	var err error
 
 	if batchNumber != "" {
-		cycle, err = s.cycleRepo.GetActiveByItemAndBatch(ctx, chatID, itemName, batchNumber)
+		cycle, err = s.cycleRepo.GetActiveByGoodsAndBatch(ctx, chatID, goods.ID, batchNumber)
 	} else {
-		cycle, err = s.cycleRepo.GetActiveByItem(ctx, chatID, itemName)
+		cycle, err = s.cycleRepo.GetActiveByGoods(ctx, chatID, goods.ID)
 	}
 
 	if err != nil {

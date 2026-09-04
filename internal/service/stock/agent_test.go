@@ -79,12 +79,12 @@ func TestIntentClassificationGetStock(t *testing.T) {
 func TestFormatStockResponse(t *testing.T) {
 	items := []domain.Inventory{
 		{
-			ItemName: "Kecap Manis",
+			Good:     &domain.Good{Name: "Kecap Manis"},
 			StockQty: 5.0,
 			Unit:     "botol",
 		},
 		{
-			ItemName: "Kecap Asin",
+			Good:     &domain.Good{Name: "Kecap Asin"},
 			StockQty: 3.0,
 			Unit:     "botol",
 		},
@@ -100,7 +100,7 @@ func TestFormatStockResponse(t *testing.T) {
 
 func TestFormatStockWithLastPurchase(t *testing.T) {
 	items := []domain.Inventory{
-		{ItemName: "susu bmt 800g", StockQty: 1, Unit: "pcs"},
+		{Good: &domain.Good{Name: "susu bmt 800g"}, StockQty: 1, Unit: "pcs"},
 	}
 	last := &domain.Transaction{
 		ItemName:        "susu bmt 800g",

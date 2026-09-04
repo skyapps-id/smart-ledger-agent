@@ -7,7 +7,7 @@ import (
 )
 
 func invOf(name, unit string, qty float64) *domain.Inventory {
-	return &domain.Inventory{ItemName: name, Unit: unit, StockQty: qty}
+	return &domain.Inventory{Good: &domain.Good{Name: name}, Unit: unit, StockQty: qty}
 }
 
 func TestConvertGramToPcs(t *testing.T) {
@@ -174,8 +174,8 @@ func TestConvertFromMessageBallCount(t *testing.T) {
 func TestResolveStoredContentWins(t *testing.T) {
 	// Isi dipelajari dari user: 1 galon = 19lt; nama & pesan tanpa ukuran.
 	inv := invOf("le minerale galon", "galon", 1)
-	inv.ContentSize = 19
-	inv.ContentUnit = "lt"
+	inv.Good.FactorUom = 19
+	inv.Good.ConversionUom = "lt"
 
 	qty, unit, learnedQty, _, ok := ResolveUsageConversion(inv, 19, "lt", "pakai air 19lt")
 	if !ok || qty != 1 || unit != "galon" || learnedQty != 0 {
@@ -211,7 +211,7 @@ func TestConversionQuestion(t *testing.T) {
 	if q := ConversionQuestion(inv, "galon"); q != "" {
 		t.Error("same unit as inventory should not ask")
 	}
-	inv.ContentSize, inv.ContentUnit = 15, "lt"
+	inv.Good.FactorUom, inv.Good.ConversionUom = 15, "lt"
 	if q := ConversionQuestion(inv, "lt"); q != "" {
 		t.Error("stored content should not ask")
 	}

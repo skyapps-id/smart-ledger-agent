@@ -25,6 +25,7 @@ import (
 type transactionAgent struct {
 	db                 *gorm.DB
 	txnRepo            repository.TransactionRepository
+	goodsRepo          repository.GoodsRepository
 	invRepo            repository.InventoryRepository
 	logRepo            repository.StockLogRepository
 	consumptionService *consumption.Service
@@ -42,6 +43,7 @@ type transactionAgent struct {
 func NewAgent(
 	db *gorm.DB,
 	txnRepo repository.TransactionRepository,
+	goodsRepo repository.GoodsRepository,
 	invRepo repository.InventoryRepository,
 	logRepo repository.StockLogRepository,
 	consumptionService *consumption.Service,
@@ -54,6 +56,7 @@ func NewAgent(
 	return &transactionAgent{
 		db:                 db,
 		txnRepo:            txnRepo,
+		goodsRepo:          goodsRepo,
 		invRepo:            invRepo,
 		logRepo:            logRepo,
 		consumptionService: consumptionService,
@@ -145,12 +148,20 @@ func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.Incoming
 		return "", fmt.Errorf("format tanggal tidak valid: %w", err)
 	}
 
+	// Resolve nama barang ke master goods (auto-create bila baru) —
+	// relasi transaksi via goods_id, nama disimpan sebagai snapshot display.
+	goods, err := a.goodsRepo.WithTx(a.db).GetOrCreateByName(ctx, ext.ItemName, ext.Unit)
+	if err != nil {
+		return "", fmt.Errorf("resolve goods: %w", err)
+	}
+
 	txn := &domain.Transaction{
 		ChatID:          msg.ChatID,
 		SenderPhone:     msg.UserPhone,
 		Type:            domain.TransactionIncome,
 		Category:        ext.Category,
-		ItemName:        ext.ItemName,
+		GoodsID:         goods.ID,
+		ItemName:        goods.Name,
 		Amount:          ext.Amount,
 		RawPayload:      msg.Text,
 		TransactionDate: txnDate,
@@ -170,9 +181,16 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 	var lastPurchase *domain.Transaction
 	var txnDate time.Time
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Resolve nama barang ke master goods (auto-create bila baru):
+		// seluruh relasi berikutnya (transaksi, inventory) via goods_id.
+		goods, err := a.goodsRepo.WithTx(tx).GetOrCreateByName(ctx, ext.ItemName, ext.Unit)
+		if err != nil {
+			return fmt.Errorf("resolve goods: %w", err)
+		}
+
 		// Skip financial transaction creation if amount is 0 but affects stock (inventory-only update)
 		if ext.Amount == 0 && ext.AffectsStock {
-			upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, ext.ItemName, ext.Quantity, ext.Unit)
+			upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, ext.Unit)
 			if err != nil {
 				return fmt.Errorf("tambah stok: %w", err)
 			}
@@ -210,7 +228,8 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			SenderPhone:     msg.UserPhone,
 			Type:            domain.TransactionExpense,
 			Category:        ext.Category,
-			ItemName:        ext.ItemName,
+			GoodsID:         goods.ID,
+			ItemName:        goods.Name,
 			Amount:          ext.Amount,
 			RawPayload:      msg.Text,
 			TransactionDate: txnDate,
@@ -221,10 +240,11 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return fmt.Errorf("catat expense: %w", err)
 		}
 
-		// Ambil pembelian terakhir item yang sama untuk analisa beli ulang
-		// (stok maupun non-stok: umur 1 ball pampers / 1 token listrik, dll).
+		// Ambil pembelian terakhir barang yang sama (relasi goods) untuk
+		// analisa beli ulang (stok maupun non-stok: umur 1 ball pampers /
+		// 1 token listrik, dll).
 		if ext.Amount > 0 {
-			lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByItem(ctx, msg.ChatID, ext.ItemName, txn.ID, txnDate)
+			lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByGoods(ctx, msg.ChatID, goods.ID, txn.ID, txnDate)
 		}
 
 		// Lewati inventaris bila pengeluaran bukan barang stok (jasa/utilitas/dll).
@@ -232,7 +252,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return nil
 		}
 
-		upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, ext.ItemName, ext.Quantity, ext.Unit)
+		upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, ext.Unit)
 		if err != nil {
 			return fmt.Errorf("tambah stok: %w", err)
 		}
@@ -381,9 +401,10 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 		ext.ItemName = forcedItem
 	}
 
-	// Resolve nama barang ke inventory: exact → ILIKE → saring via pesan asli,
-	// agar "ambil susu bmt 200g" tetap ketemu walau ekstraksi LLM melepas ukuran.
-	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.invRepo, msg.ChatID, msg.Text, ext.ItemName)
+	// Resolve nama barang ke inventory (via relasi goods): exact → ILIKE →
+	// saring via pesan asli, agar "ambil susu bmt 200g" tetap ketemu walau
+	// ekstraksi LLM melepas ukuran.
+	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.goodsRepo, a.invRepo, msg.ChatID, msg.Text, ext.ItemName)
 	if err != nil {
 		var amb *agent.AmbiguousInventoryError
 		switch {
@@ -405,8 +426,8 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 			return "", fmt.Errorf("cari inventaris: %w", err)
 		}
 	}
-	// Gunakan nama resmi inventory untuk semua operasi berikutnya.
-	ext.ItemName = inv.ItemName
+	// Gunakan nama resmi barang (relasi goods) untuk operasi berikutnya.
+	ext.ItemName = inv.Name()
 
 	// Konversi jumlah pakai ke satuan inventory dengan prioritas: isi
 	// tersimpan → isi di nama barang → pola "<kemasan> <isi>" di pesan.
@@ -416,7 +437,8 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 	if ok {
 		ext.Quantity, ext.Unit = convQty, convUnit
 		if learnedQty > 0 {
-			if err := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, learnedQty, learnedUnit); err != nil {
+			// Promosikan faktor yang baru diketahui ke master goods.
+			if err := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, learnedUnit, learnedQty); err != nil {
 				a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
 			}
 		}
@@ -484,9 +506,9 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 
 		// Start/update consumption cycle: kirim qty dalam SATUAN INVENTORY
 		// (hasil konversi) — StartUsage menghitung sendiri faktor gr/ml-nya
-		// dari ukuran di nama barang.
+		// dari ukuran di nama barang. Relasi cycle via goods.
 		conversionFactor := 1.0 // fallback bila nama barang tanpa ukuran
-		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, ext.ItemName, ext.Quantity, ext.Unit, conversionFactor, ext.TransactionDate)
+		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, inv.Good, ext.Quantity, ext.Unit, conversionFactor, ext.TransactionDate)
 		return err
 	})
 	if err != nil {
@@ -499,7 +521,7 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 	a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berkurang
 
 	// Fetch updated inventory after transaction for accurate remaining stock
-	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatItem(ctx, msg.ChatID, ext.ItemName)
+	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatGoods(ctx, msg.ChatID, inv.GoodsID)
 	if err != nil {
 		// Fallback to calculation if fetch fails
 		remaining := inv.StockQty - ext.Quantity

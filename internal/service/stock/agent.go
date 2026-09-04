@@ -21,6 +21,7 @@ type stockAgent struct {
 	// systemPrompt adalah prompt skill agent ini (lihat prompt.go);
 	// dipakai bila agent diberi LLM call sendiri.
 	systemPrompt string
+	goodsRepo    repository.GoodsRepository
 	invRepo      repository.InventoryRepository
 	txnRepo      repository.TransactionRepository
 	sender       agent.MessageSender
@@ -29,6 +30,7 @@ type stockAgent struct {
 
 func NewAgent(
 	db *gorm.DB,
+	goodsRepo repository.GoodsRepository,
 	invRepo repository.InventoryRepository,
 	txnRepo repository.TransactionRepository,
 	sender agent.MessageSender,
@@ -37,6 +39,7 @@ func NewAgent(
 	return &stockAgent{
 		db:           db,
 		systemPrompt: stockSystemPrompt,
+		goodsRepo:    goodsRepo,
 		invRepo:      invRepo,
 		txnRepo:      txnRepo,
 		sender:       sender,
@@ -86,7 +89,7 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 
 			filteredItems := make([]domain.Inventory, 0)
 			for _, item := range allItems {
-				if strings.Contains(strings.ToLower(item.ItemName), strings.ToLower(itemFilter)) {
+				if strings.Contains(strings.ToLower(item.Name()), strings.ToLower(itemFilter)) {
 					filteredItems = append(filteredItems, item)
 				}
 			}
@@ -127,15 +130,16 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 }
 
 // lastPurchases mengambil pembelian (harga) terakhir tiap item dari
-// riwayat transaksi untuk ditampilkan di balasan stok.
+// riwayat transaksi (relasi goods_id) untuk ditampilkan di balasan stok.
+// Key = nama barang (dipakai formatStock).
 func (a *stockAgent) lastPurchases(ctx context.Context, chatID string, items []domain.Inventory) map[string]*domain.Transaction {
 	last := make(map[string]*domain.Transaction, len(items))
 	for _, it := range items {
-		txn, err := a.txnRepo.WithTx(a.db).LastExpenseByItem(ctx, chatID, it.ItemName, 0, time.Now())
+		txn, err := a.txnRepo.WithTx(a.db).LastExpenseByGoods(ctx, chatID, it.GoodsID, 0, time.Now())
 		if err != nil || txn == nil {
 			continue
 		}
-		last[it.ItemName] = txn
+		last[it.Name()] = txn
 	}
 	return last
 }

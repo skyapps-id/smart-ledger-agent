@@ -21,6 +21,7 @@ type InventoryRepository interface {
 	GetByChatItem(ctx context.Context, chatID, itemName string) (*domain.Inventory, error)
 	AddStock(ctx context.Context, chatID, itemName string, qty float64, unit string) (*domain.Inventory, error)
 	DecreaseStock(ctx context.Context, id int64, qty float64) error
+	UpdateContent(ctx context.Context, id int64, contentSize float64, contentUnit string) error
 	ListByChat(ctx context.Context, chatID string) ([]domain.Inventory, error)
 	SearchByName(ctx context.Context, chatID, keyword string) ([]domain.Inventory, error)
 	GetCategorySummary(ctx context.Context, chatID string) ([]CategorySummary, error)
@@ -99,6 +100,14 @@ func (r *inventoryRepo) DecreaseStock(ctx context.Context, id int64, qty float64
 		return ErrInsufficientStock
 	}
 	return nil
+}
+
+// UpdateContent menyimpan isi per kemasan (faktor konversi yang dipelajari
+// dari jawaban user) pada entri inventaris.
+func (r *inventoryRepo) UpdateContent(ctx context.Context, id int64, contentSize float64, contentUnit string) error {
+	return r.db.WithContext(ctx).Model(&domain.Inventory{}).
+		Where("id = ?", id).
+		Updates(map[string]any{"content_size": contentSize, "content_unit": contentUnit}).Error
 }
 
 // ListByChat mengembalikan seluruh entri inventaris pada chat (ledger).

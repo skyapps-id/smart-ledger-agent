@@ -58,6 +58,7 @@ func main() {
 	// ── External clients ──
 	extractor := llm.New(cfg.LLM)
 	intentExtractor := llm.NewIntentExtractor(cfg.LLM)
+	conversionReasoner := llm.NewConversionReasoner(cfg.LLM)
 	wahaSender := waha.New(cfg.WAHA)
 
 	// ── WAHA Sender Worker (Sequential dengan Rate Limiting) ──
@@ -94,7 +95,7 @@ func main() {
 	agents := []agent.SubAgent{
 		transaction.NewAgent(db, txnRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
 		stock.NewAgent(db, invRepo, txnRepo, replySender, logger),
-		consumption.NewAgent(db, invRepo, logRepo, consumptionService, invCache, pendingConfirms, replySender, logger),
+		consumption.NewAgentWithReasoner(db, invRepo, logRepo, consumptionService, invCache, pendingConfirms, conversionReasoner, replySender, logger),
 		report.NewAgent(db, txnRepo, logRepo, replySender, logger),
 		system.NewAgent(db, chatRepo, txnRepo, replySender, logger),
 	}

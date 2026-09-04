@@ -39,6 +39,35 @@ func TestPendingResolveByNumber(t *testing.T) {
 	}
 }
 
+func TestPendingResolveFreeText(t *testing.T) {
+	p := newTestPending()
+	p.Set("c1", PendingChoice{
+		Action:      domain.ActionConsumption,
+		Params:      map[string]interface{}{"consumption_action": "use", "item_name": "le minerale galon", "usage_qty": 3.0, "usage_unit": "lt"},
+		FreeTextKey: "conversion_answer",
+		Options:     []string{}, // bukan pilihan bernomor
+		OriginalText: "Pakai le minerale 3lt",
+	})
+
+	action, origText, ok := p.Resolve("c1", "15lt")
+	if !ok {
+		t.Fatal("expected free-text resolve")
+	}
+	if action.Params["conversion_answer"] != "15lt" {
+		t.Errorf("wrong answer: %v", action.Params["conversion_answer"])
+	}
+	if action.Params["usage_qty"] != 3.0 || action.Params["item_name"] != "le minerale galon" {
+		t.Errorf("original params lost: %v", action.Params)
+	}
+	if origText != "Pakai le minerale 3lt" {
+		t.Errorf("wrong original text: %q", origText)
+	}
+
+	if _, _, ok := p.Resolve("c1", "15lt"); ok {
+		t.Error("pending should be consumed after resolve")
+	}
+}
+
 func TestPendingResolveVariants(t *testing.T) {
 	cases := []struct {
 		text string

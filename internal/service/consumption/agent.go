@@ -13,6 +13,7 @@ import (
 
 	"smart-ledger-agent/internal/domain"
 	"smart-ledger-agent/internal/entity"
+	"smart-ledger-agent/internal/llm"
 	"smart-ledger-agent/internal/repository"
 	"smart-ledger-agent/internal/service/agent"
 )
@@ -28,6 +29,9 @@ type consumptionAgent struct {
 	// systemPrompt adalah prompt skill agent ini (lihat prompt.go);
 	// dipakai bila agent diberi LLM call sendiri.
 	systemPrompt string
+	// reasoner menalar konversi satuan di jalur ambigu (nil = fallback
+	// ke pertanyaan template deterministik, dipakai di test).
+	reasoner llm.ConversionReasoner
 	// pending menyimpan konfirmasi batch menunggu jawaban user ("1"/"2").
 	pending *agent.PendingConfirms
 	sender  agent.MessageSender
@@ -44,6 +48,22 @@ func NewAgent(
 	sender agent.MessageSender,
 	logger *slog.Logger,
 ) agent.SubAgent {
+	return NewAgentWithReasoner(db, invRepo, logRepo, consumptionService, invCache, pending, nil, sender, logger)
+}
+
+// NewAgentWithReasoner seperti NewAgent plus penalar konversi LLM untuk
+// jalur ambigu (dipakai composition root di cmd/server).
+func NewAgentWithReasoner(
+	db *gorm.DB,
+	invRepo repository.InventoryRepository,
+	logRepo repository.StockLogRepository,
+	consumptionService *Service,
+	invCache *cache.Cache,
+	pending *agent.PendingConfirms,
+	reasoner llm.ConversionReasoner,
+	sender agent.MessageSender,
+	logger *slog.Logger,
+) agent.SubAgent {
 	return &consumptionAgent{
 		db:                 db,
 		invRepo:            invRepo,
@@ -51,6 +71,7 @@ func NewAgent(
 		consumptionService: consumptionService,
 		invCache:           invCache,
 		pending:            pending,
+		reasoner:           reasoner,
 		systemPrompt:       consumptionSystemPrompt,
 		sender:             sender,
 		log:                logger,
@@ -133,6 +154,14 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 		}
 		if conversionFactor == 0 {
 			conversionFactor = 1.0
+		}
+
+		// Jawaban pertanyaan faktor konversi ("15lt"): simpan ke inventory
+		// lalu lanjutkan pemakaian — konversi kini memakai isi tersimpan.
+		if ans, has := params["conversion_answer"].(string); has && ans != "" {
+			if stop, err := a.applyConversionAnswer(ctx, msg, itemName, ans, intentCost); stop {
+				return err
+			}
 		}
 
 		// Kurangi stok dan mulai consumption cycle dengan auto-generated batch
@@ -319,10 +348,30 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 	// Gunakan nama resmi inventory untuk semua operasi berikutnya.
 	itemName = inv.ItemName
 
-	// Konversi jumlah pakai ke satuan inventory: LLM menyebut pemakaian dalam
-	// gr/ml ("pakai susu bmt 200g" → 200 g) padahal stok dihitung per kemasan
-	// (1 pcs = 200g). Tanpa ini validasi stok membandingkan 1 pcs vs 200 g.
-	usageQty, usageUnit = ConvertToInventoryUnit(inv, usageQty, usageUnit)
+		// Konversi jumlah pakai ke satuan inventory dengan prioritas: isi
+		// tersimpan (jawaban user sebelumnya) → isi di nama barang → pola
+		// "<kemasan> <isi>" di pesan. Isi yang baru diketahui disimpan agar
+		// pemakaian berikutnya stabil; bila tak bisa dikonversi dan isinya
+		// belum diketahui, tanya user dulu (jawaban bebas, mis. "15lt").
+		convQty, convUnit, learnedQty, learnedUnit, ok := ResolveUsageConversion(inv, usageQty, usageUnit, msg.Text)
+		if ok {
+			usageQty, usageUnit = convQty, convUnit
+			if learnedQty > 0 {
+				if err := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, learnedQty, learnedUnit); err != nil {
+					a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
+				}
+			}
+		} else if ConversionQuestion(inv, usageUnit) != "" {
+			// Jalur ambigu: kode tidak tahu faktornya → LLM penalar menentukan
+			// (faktor eksplisit di pesan? pertanyaan natural? tidak relevan?),
+			// dengan fallback deterministik bila LLM gagal.
+			stop, newQty, newUnit, extraCost, rerr := a.resolveAmbiguousConversion(ctx, msg, inv, itemName, usageQty, usageUnit, usageDate, intentCost)
+			intentCost += extraCost
+			if stop {
+				return rerr
+			}
+			usageQty, usageUnit = newQty, newUnit
+		}
 
 	// Validasi stok cukup
 	if inv.StockQty < usageQty {
@@ -391,6 +440,99 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 		"🔄 Pemakaian %s%s %.1f %s dicatat.\n✅ Consumption cycle: OPEN\n📦 Sisa stok: %.1f %s",
 		itemName, batchInfo, usageQty, usageUnit, updatedInv.StockQty, updatedInv.Unit,
 	), intentCost)
+}
+
+// applyConversionAnswer memproses jawaban user atas pertanyaan faktor
+// konversi (mis. "15lt"): parse angka+satuan (regex dulu, lalu penalar LLM
+// untuk jawaban bebas), simpan sebagai isi per kemasan di inventory.
+// Return stop=true bila reply sudah dikirim (format tidak dikenali /
+// item tidak ketemu) sehingga aksi use dihentikan.
+func (a *consumptionAgent) applyConversionAnswer(ctx context.Context, msg entity.IncomingMessage, itemName, answer string, intentCost float64) (bool, error) {
+	inv, err := agent.ResolveInventoryItem(ctx, a.db, a.invRepo, msg.ChatID, msg.Text, itemName)
+	if err != nil {
+		return true, agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+			fmt.Sprintf("Barang '%s' tidak ditemukan di inventaris.", itemName), intentCost)
+	}
+
+	qty, unit := extractSizeFromItemName(answer)
+	if qty <= 0 && a.reasoner != nil {
+		input := fmt.Sprintf("Pesan user: %q\nBarang: %q (stok dalam satuan: %s)\nPemakaian: dalam satuan lain, menunggu faktor konversi",
+			answer, inv.ItemName, inv.Unit)
+		reasoning, usage, rerr := a.reasoner.ReasonConversion(ctx, conversionReasonPrompt, input, msg.ChatID)
+		if rerr != nil {
+			a.log.ErrorContext(ctx, "gagal reason jawaban konversi", "err", rerr)
+		} else if reasoning.Action == "convert" {
+			qty, unit = reasoning.ContentQty, reasoning.ContentUnit
+		}
+		_ = usage
+	}
+	if qty <= 0 || unit == "" {
+		return true, agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+			"Format belum jelas. Ketik angka + satuan, contoh: 15lt atau 48pcs", intentCost)
+	}
+	if err := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, qty, unit); err != nil {
+		a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
+	}
+	a.log.InfoContext(ctx, "faktor konversi dipelajari", "item", inv.ItemName, "content", qty, "unit", unit)
+	return false, nil
+}
+
+// resolveAmbiguousConversion menangani pemakaian yang tak bisa dikonversi
+// secara deterministik. Penalar LLM memutuskan: (a) faktor eksplisit ada
+// di pesan → konversi & simpan; (b) perlu klarifikasi → kirim pertanyaan
+// natural + daftarkan pending; (c) tidak relevan → biarkan validasi stok
+// yang menolak. Fallback ke pertanyaan template bila LLM gagal.
+// Return: stop=true bila reply terkirim; extraCost = biaya LLM reasoning.
+func (a *consumptionAgent) resolveAmbiguousConversion(
+	ctx context.Context, msg entity.IncomingMessage, inv *domain.Inventory,
+	itemName string, usageQty float64, usageUnit, usageDate string, intentCost float64,
+) (stop bool, newQty float64, newUnit string, extraCost float64, err error) {
+	question := ConversionQuestion(inv, usageUnit)
+
+	if a.reasoner != nil {
+		input := fmt.Sprintf("Pesan user: %q\nBarang: %q (stok dalam satuan: %s)\nPemakaian: %g %s",
+			msg.Text, inv.ItemName, inv.Unit, usageQty, usageUnit)
+		reasoning, usage, rerr := a.reasoner.ReasonConversion(ctx, conversionReasonPrompt, input, msg.ChatID)
+		if rerr != nil {
+			a.log.ErrorContext(ctx, "gagal reason konversi, fallback template", "err", rerr)
+		} else {
+			extraCost = usage.CostUSD
+			switch reasoning.Action {
+			case "convert":
+				if q, u, okC := convertByContent(inv, reasoning.ContentQty, reasoning.ContentUnit, usageQty, usageUnit); okC {
+					if uerr := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, reasoning.ContentQty, reasoning.ContentUnit); uerr != nil {
+						a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", uerr)
+					}
+					a.log.InfoContext(ctx, "faktor konversi dari penalaran LLM",
+						"item", inv.ItemName, "content", reasoning.ContentQty, "unit", reasoning.ContentUnit)
+					return false, q, u, extraCost, nil
+				}
+			case "ask":
+				if reasoning.Question != "" {
+					question = reasoning.Question
+				}
+			case "reject":
+				return false, usageQty, usageUnit, extraCost, nil
+			}
+		}
+	}
+
+	if a.pending != nil {
+		a.pending.Set(msg.ChatID, agent.PendingChoice{
+			Action: domain.ActionConsumption,
+			Params: map[string]interface{}{
+				"consumption_action": "use",
+				"item_name":          itemName,
+				"usage_qty":          usageQty,
+				"usage_unit":         usageUnit,
+				"usage_date":         usageDate,
+			},
+			FreeTextKey:  "conversion_answer",
+			OriginalText: msg.Text,
+		})
+	}
+	return true, usageQty, usageUnit, extraCost,
+		agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, question, intentCost+extraCost)
 }
 
 // confirmBatchIfNeeded menangani kasus item punya LEBIH DARI SATU batch aktif

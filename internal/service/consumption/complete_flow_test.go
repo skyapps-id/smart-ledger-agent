@@ -131,9 +131,8 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			assert.Contains(t, report, "Susu 400gr")
 			assert.Contains(t, report, "sudah habis!")
 			assert.Contains(t, report, "⏰ Durasi:")
-			assert.Contains(t, report, "📊 Total:")
+			assert.Contains(t, report, "📊 Total: 400 gr")
 			assert.Contains(t, report, "📈 Rate:")
-			assert.Contains(t, report, "gr/hari")
 
 			// Verifikasi cycle status - tidak boleh ada active cycle
 			_, err = cycleRepo.GetActiveByItem(ctx, chatID, "Susu 400gr")
@@ -199,7 +198,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			report, err := consumptionService.CompleteUsage(ctx, chatID, item.name, "")
 			require.NoError(t, err)
 			assert.Contains(t, report, "sudah habis!")
-			assert.Contains(t, report, "gr/hari")
+			assert.Contains(t, report, "/hari")
 		}
 
 		// Verify semua cycles completed

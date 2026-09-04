@@ -221,12 +221,14 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return fmt.Errorf("catat expense: %w", err)
 		}
 
-		// Lewati inventaris bila pengeluaran bukan barang stok (jasa/utilitas/dll),
-		// tetapi ambil pembelian terakhir item yang sama untuk analisa beli ulang.
+		// Ambil pembelian terakhir item yang sama untuk analisa beli ulang
+		// (stok maupun non-stok: umur 1 ball pampers / 1 token listrik, dll).
+		if ext.Amount > 0 {
+			lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByItem(ctx, msg.ChatID, ext.ItemName, txn.ID, txnDate)
+		}
+
+		// Lewati inventaris bila pengeluaran bukan barang stok (jasa/utilitas/dll).
 		if !ext.AffectsStock {
-			if ext.Amount > 0 {
-				lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByItem(ctx, msg.ChatID, ext.ItemName, txn.ID, txnDate)
-			}
 			return nil
 		}
 
@@ -327,6 +329,10 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			baseReply += consumptionAnalysis
 		}
 
+		if analysis := repurchaseAnalysis(txnDate, lastPurchase); analysis != "" {
+			baseReply += analysis
+		}
+
 		return baseReply, nil
 	}
 
@@ -402,9 +408,35 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 	// Gunakan nama resmi inventory untuk semua operasi berikutnya.
 	ext.ItemName = inv.ItemName
 
-	// Konversi jumlah pakai ke satuan inventory (mis. 200 g → 1 pcs untuk
-	// barang "susu bmt 200g") agar validasi & pengurangan stok apple-to-apple.
-	ext.Quantity, ext.Unit = consumption.ConvertToInventoryUnit(inv, ext.Quantity, ext.Unit)
+	// Konversi jumlah pakai ke satuan inventory dengan prioritas: isi
+	// tersimpan → isi di nama barang → pola "<kemasan> <isi>" di pesan.
+	// Bila tak bisa dikonversi dan isinya belum diketahui, tanya user dulu
+	// (jawaban bebas "15lt" di-resume ke consumption agent).
+	convQty, convUnit, learnedQty, learnedUnit, ok := consumption.ResolveUsageConversion(inv, ext.Quantity, ext.Unit, msg.Text)
+	if ok {
+		ext.Quantity, ext.Unit = convQty, convUnit
+		if learnedQty > 0 {
+			if err := a.invRepo.WithTx(a.db).UpdateContent(ctx, inv.ID, learnedQty, learnedUnit); err != nil {
+				a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
+			}
+		}
+	} else if q := consumption.ConversionQuestion(inv, ext.Unit); q != "" {
+		if a.pending != nil {
+			a.pending.Set(msg.ChatID, agent.PendingChoice{
+				Action: domain.ActionConsumption,
+				Params: map[string]interface{}{
+					"consumption_action": "use",
+					"item_name":          ext.ItemName,
+					"usage_qty":          ext.Quantity,
+					"usage_unit":         ext.Unit,
+					"usage_date":         ext.TransactionDate,
+				},
+				FreeTextKey:  "conversion_answer",
+				OriginalText: msg.Text,
+			})
+		}
+		return q, nil
+	}
 
 	// Extract satuan asli dari nama item untuk consumption tracking
 	// Contoh: "susu uht 500ml" → satuan asli: "500ml"

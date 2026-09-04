@@ -62,7 +62,12 @@ type Inventory struct {
 	ItemName  string    `gorm:"size:128;uniqueIndex:idx_inv_chat_item" json:"item_name"`
 	StockQty  float64   `gorm:"type:numeric(12,2)" json:"stock_qty"`
 	Unit      string    `gorm:"size:32" json:"unit"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// ContentSize/ContentUnit = isi per kemasan yang DIPELAJARI dari user
+	// (mis. 1 galon = 15 lt → ContentSize 15, ContentUnit "lt"). Dipakai
+	// konversi pemakaian ke satuan kemasan secara stabil.
+	ContentSize float64   `gorm:"type:numeric(12,3)" json:"content_size"`
+	ContentUnit string    `gorm:"size:16" json:"content_unit"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func (Inventory) TableName() string { return "inventory" }

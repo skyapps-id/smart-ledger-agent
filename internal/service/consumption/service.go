@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -100,6 +98,9 @@ func determineSmallestUnit(purchaseUnit string) string {
 	if strings.Contains(lowerUnit, "liter") {
 		return "ml"
 	}
+	if strings.Contains(lowerUnit, "lt") {
+		return "ml"
+	}
 	// Only match standalone "l" as a unit, not "l" inside words like "kaleng"
 	if lowerUnit == "l" || strings.HasSuffix(lowerUnit, " l") || strings.HasPrefix(lowerUnit, "l ") {
 		return "ml"
@@ -113,53 +114,31 @@ func determineSmallestUnit(purchaseUnit string) string {
 		return "gr"
 	}
 
+	// Count units -> pcs
+	if strings.Contains(lowerUnit, "pcs") || strings.Contains(lowerUnit, "buah") ||
+		strings.Contains(lowerUnit, "keping") || strings.Contains(lowerUnit, "ball") {
+		return "pcs"
+	}
+
 	// Default to gr for unknown units
 	return "gr"
 }
 
-// ExtractOriginalUnitFromItemName mengekstrak satuan asli dari nama item
-// Contoh: "susu uht 500ml" → "ml", "susu 1kg" → "kg", "teh 200gr" → "gr"
+// ExtractOriginalUnitFromItemName mengekstrak satuan ASLI (mentah, tanpa
+// normalisasi) dari nama item. Contoh: "susu uht 500ml" → "ml",
+// "susu 1kg" → "kg", "teh 200gr" → "gr", "pampers 48pcs" → "pcs".
+// Satuan user dipakai apa adanya — konversi hanya lewat jalur eksplisit
+// (lihat convert.go). Nama tanpa ukuran → "".
 func ExtractOriginalUnitFromItemName(itemName string) string {
-	lowerName := strings.ToLower(itemName)
-
-	// Pattern untuk mencari angka + unit di nama item
-	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|g|kg|kilogram|l|liter)`)
-	matches := re.FindStringSubmatch(lowerName)
-
-	if len(matches) >= 3 {
-		unit := matches[2]
-		// Normalize unit
-		switch unit {
-		case "gr", "gram", "g":
-			return "gr"
-		case "kg", "kilogram":
-			return "gr" // akan dikonversi ke gr
-		case "ml", "mililiter", "mililitre":
-			return "ml"
-		case "l", "liter":
-			return "ml" // akan dikonversi ke ml
-		}
-	}
-
-	return ""
+	_, unit := extractSizeFromItemName(itemName)
+	return unit
 }
 
-// ExtractQuantityFromItemName mengekstrak quantity dari nama item
-// Contoh: "susu uht 500ml" → 500, "susu 1liter" → 1
+// ExtractQuantityFromItemName mengekstrak angka ukuran dari nama item.
+// Contoh: "susu uht 500ml" → 500, "pampers mamypoko 48" → 48.
 func ExtractQuantityFromItemName(itemName string) float64 {
-	lowerName := strings.ToLower(itemName)
-
-	// Pattern untuk mencari angka + unit di nama item
-	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|gr|gram|g|kg|kilogram|l|liter)`)
-	matches := re.FindStringSubmatch(lowerName)
-
-	if len(matches) >= 2 {
-		if qty, err := strconv.ParseFloat(matches[1], 64); err == nil {
-			return qty
-		}
-	}
-
-	return 0
+	qty, _ := extractSizeFromItemName(itemName)
+	return qty
 }
 
 // determineSmallestUnitFromName menentukan satuan terkecil berdasarkan nama barang
@@ -205,23 +184,25 @@ func (s *Service) StartUsage(ctx context.Context, chatID, itemName string, usage
 		}
 	}
 
-	// Extract original unit from item name untuk tracking yang akurat
-	originalUnit := ExtractOriginalUnitFromItemName(itemName)
-	originalQty := ExtractQuantityFromItemName(itemName)
-
 	// Determine smallest unit based on usage unit
 	smallestUnit := determineSmallestUnit(usageUnit)
 
 	// Jika ada original unit dari nama item, gunakan untuk consumption tracking.
-	// Semantic seragam: usageQty dalam SATUAN INVENTORY (pcs hasil konversi),
-	// conversion factor = isi gr/ml per satuan inventory (mis. 1 pcs susu
-	// bmt 200g = 200 gr), ConsumedQty = pemakaian dalam SATUAN DASAR (gr/ml).
+	// Semantic seragam: usageQty dalam SATUAN INVENTORY (pcs/ball hasil konversi),
+	// conversion factor = isi per satuan inventory dalam SATUAN DASAR
+	// ("susu bmt 200g" → 1 pcs = 200 gr; "pampers mamypoko 48" → 1 ball = 48 pcs;
+	// "galon 15lt" → 1 galon = 15000 ml), ConsumedQty = pemakaian dalam satuan dasar.
 	finalConsumptionQty := usageQty
 	finalConversionFactor := conversionFactor
 
-	if originalUnit != "" && originalQty > 0 {
-		finalConversionFactor = originalQty
-		smallestUnit = determineSmallestUnit(originalUnit)
+	if perQty, perUnit := extractSizeFromItemName(itemName); perQty > 0 {
+		if base, baseVal, ok := unitToBase(perUnit, perQty); ok {
+			finalConversionFactor = baseVal
+			smallestUnit = base
+			if base == "ct" {
+				smallestUnit = "pcs"
+			}
+		}
 	}
 
 	// SELALU buat cycle baru setiap kali pemakaian (setiap pakai = batch baru)
@@ -353,17 +334,20 @@ func (s *Service) CompleteUsageWithDate(ctx context.Context, chatID, itemName, b
 		itemLabel = fmt.Sprintf("%s (%s)", itemName, cycle.BatchNumber)
 	}
 
+	totalStr, totalUnitStr := FormatQtyForDisplay(totalPurchasedInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+	rateStr, rateUnitStr := FormatQtyForDisplay(dailyRate, displayUnit, itemName, cycle.PurchaseUnit)
+
 	return fmt.Sprintf(
 		"✅ %s sudah habis!\n"+
 			"⏰ Durasi: %.0f hari\n"+
-			"📊 Total: %.0f %s (%.1f %s)\n"+
-			"📈 Rate: %.1f %s/hari\n"+
+			"📊 Total: %s %s (%.1f %s)\n"+
+			"📈 Rate: %s %s/hari\n"+
 			"📅 Mulai: %s\n"+
 			"📅 Selesai: %s",
 		itemLabel,
 		daysInUse,
-		totalPurchasedInSmallestUnit, displayUnit, cycle.PurchaseQty, cycle.PurchaseUnit,
-		dailyRate, displayUnit,
+		totalStr, totalUnitStr, cycle.PurchaseQty, cycle.PurchaseUnit,
+		rateStr, rateUnitStr,
 		cycle.StartDate.Format("02/01/2006"),
 		endTime.Format("02/01/2006"),
 	), nil
@@ -421,23 +405,28 @@ func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID, itemName, batc
 		displayUnit = determineSmallestUnitFromName(itemName)
 	}
 
+	beliStr, beliUnitStr := FormatQtyForDisplay(totalPurchasedInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+	terpakaiStr, terpakaiUnitStr := FormatQtyForDisplay(totalConsumedInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+	sisaStr, sisaUnitStr := FormatQtyForDisplay(remainingInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+	rateStr, rateUnitStr := FormatQtyForDisplay(dailyRateInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+
 	return fmt.Sprintf(
 		"📊 %s: %s\n"+
-			"📦 Beli: %g %s (%.0f %s) pada %s\n"+
+			"📦 Beli: %g %s (%s %s) pada %s\n"+
 			"⏰ Durasi: %.0f hari\n"+
-			"📉 Terpakai: %.0f %s\n"+
-			"📊 Sisa: %.0f %s (%.1f %s)\n"+
-			"📈 Rate: %.1f %s/hari\n"+
+			"📉 Terpakai: %s %s\n"+
+			"📊 Sisa: %s %s (%.1f %s)\n"+
+			"📈 Rate: %s %s/hari\n"+
 			"🔮 Estimasi: %d hari lagi\n"+
 			"Status: %s\n\n"+
 			"💡 Koreksi data: ketik \"terpakai %s (%s) [jumlah] [unit]\"",
 		itemLabel,
 		status,
-		cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit, displayUnit, cycle.StartDate.Format("02/01/2006"),
+		cycle.PurchaseQty, cycle.PurchaseUnit, beliStr, beliUnitStr, cycle.StartDate.Format("02/01/2006"),
 		daysInUse,
-		totalConsumedInSmallestUnit, displayUnit,
-		remainingInSmallestUnit, displayUnit, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
-		dailyRateInSmallestUnit, displayUnit,
+		terpakaiStr, terpakaiUnitStr,
+		sisaStr, sisaUnitStr, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
+		rateStr, rateUnitStr,
 		estimationDays,
 		cycle.Status,
 		cycle.ItemName, cycle.BatchNumber,
@@ -486,10 +475,12 @@ func (s *Service) ListActiveItems(ctx context.Context, chatID string) (string, e
 			displayQty = totalInSmallestUnit // fallback ke calculated quantity
 		}
 
+		qtyStr, qtyUnitStr := FormatQtyForDisplay(displayQty, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
+
 		result += fmt.Sprintf(
-			"%d. %s\n   📦 %g %s (%.0f %s)\n   📅 Mulai: %s (%.0f hari lalu)\n\n",
+			"%d. %s\n   📦 %g %s (%s %s)\n   📅 Mulai: %s (%.0f hari lalu)\n\n",
 			i+1, itemLabel,
-			cycle.PurchaseQty, cycle.PurchaseUnit, displayQty, displayUnit,
+			cycle.PurchaseQty, cycle.PurchaseUnit, qtyStr, qtyUnitStr,
 			cycle.StartDate.Format("02/01/2006"), daysInUse,
 		)
 	}
@@ -539,18 +530,22 @@ func (s *Service) GetHistory(ctx context.Context, chatID, itemName string, limit
 			dailyConsumptionInSmallestUnit = totalConsumedInSmallestUnit / daysInUse
 		}
 
+		beliStr, beliUnitStr := FormatQtyForDisplay(totalPurchasedInSmallestUnit, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
+		terpakaiStr, terpakaiUnitStr := FormatQtyForDisplay(totalConsumedInSmallestUnit, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
+		rateStr, rateUnitStr := FormatQtyForDisplay(dailyConsumptionInSmallestUnit, displayUnit, cycle.ItemName, cycle.PurchaseUnit)
+
 		result += fmt.Sprintf(
 			"%d. %s - %s\n",
 			i+1, cycle.StartDate.Format("02/01/2006"), status,
 		)
 		result += fmt.Sprintf(
-			"   Beli: %g %s (%.0f %s), Terpakai: %g %s (%.0f %s)\n",
-			cycle.PurchaseQty, cycle.PurchaseUnit, totalPurchasedInSmallestUnit, displayUnit,
-			cycle.ConsumedQty, cycle.ConsumedUnit, totalConsumedInSmallestUnit, displayUnit,
+			"   Beli: %g %s (%s %s), Terpakai: %g %s (%s %s)\n",
+			cycle.PurchaseQty, cycle.PurchaseUnit, beliStr, beliUnitStr,
+			cycle.ConsumedQty, cycle.ConsumedUnit, terpakaiStr, terpakaiUnitStr,
 		)
 		result += fmt.Sprintf(
-			"   Durasi: %.0f hari, Rate: %.1f %s/hari\n\n",
-			daysInUse, dailyConsumptionInSmallestUnit, displayUnit,
+			"   Durasi: %.0f hari, Rate: %s %s/hari\n\n",
+			daysInUse, rateStr, rateUnitStr,
 		)
 	}
 
@@ -611,21 +606,24 @@ func (s *Service) CalculateDailyConsumption(ctx context.Context, chatID, itemNam
 	dailyConsumption := totalPurchasedInSmallestUnit / daysInUse
 	displayUnit := determineSmallestUnit(purchaseUnit)
 
+	beliStr, beliUnitStr := FormatQtyForDisplay(totalPurchasedInSmallestUnit, displayUnit, itemName, purchaseUnit)
+	rateStr, rateUnitStr := FormatQtyForDisplay(dailyConsumption, displayUnit, itemName, purchaseUnit)
+
 	result := fmt.Sprintf(
 		"📊 Hasil Perhitungan Konsumsi: %s\n"+
-			"📦 Pembelian: %g %s (%.0f %s)\n"+
+			"📦 Pembelian: %g %s (%s %s)\n"+
 			"📅 Tanggal Beli: %s\n"+
 			"📅 Tanggal Habis: %s\n"+
 			"⏰ Durasi: %.0f hari\n"+
-			"📈 Konsumsi Per Hari: %.1f %s/hari\n"+
-			"📉 Total Konsumsi: %.0f %s",
+			"📈 Konsumsi Per Hari: %s %s/hari\n"+
+			"📉 Total Konsumsi: %s %s",
 		itemName,
-		purchaseQty, purchaseUnit, totalPurchasedInSmallestUnit, displayUnit,
+		purchaseQty, purchaseUnit, beliStr, beliUnitStr,
 		purchaseDate.Format("02/01/2006"),
 		endDate.Format("02/01/2006"),
 		daysInUse,
-		dailyConsumption, displayUnit,
-		totalPurchasedInSmallestUnit, displayUnit,
+		rateStr, rateUnitStr,
+		beliStr, beliUnitStr,
 	)
 
 	return result, nil
@@ -689,17 +687,21 @@ func (s *Service) UpdateConsumption(ctx context.Context, chatID, itemName, batch
 
 	s.log.InfoContext(ctx, "consumption cycle diupdate (koreksi)", "item", itemName, "batch", cycle.BatchNumber, "new_consumed_qty", consumedQty, "new_consumed_unit", consumedUnit)
 
+	terpakaiStr, terpakaiUnitStr := FormatQtyForDisplay(totalConsumedInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+	sisaStr, sisaUnitStr := FormatQtyForDisplay(remainingInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+	rateStr, rateUnitStr := FormatQtyForDisplay(dailyRateInSmallestUnit, displayUnit, itemName, cycle.PurchaseUnit)
+
 	return fmt.Sprintf(
 		"✅ Konsumisi %s diupdate!\n"+
-			"📉 Terpakai: %.0f %s\n"+
-			"📊 Sisa: %.0f %s (%.1f %s)\n"+
-			"📈 Rate: %.1f %s/hari\n"+
+			"📉 Terpakai: %s %s\n"+
+			"📊 Sisa: %s %s (%.1f %s)\n"+
+			"📈 Rate: %s %s/hari\n"+
 			"🔮 Estimasi: %d hari lagi\n"+
 			"📅 Mulai: %s",
 		itemLabel,
-		totalConsumedInSmallestUnit, displayUnit,
-		remainingInSmallestUnit, displayUnit, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
-		dailyRateInSmallestUnit, displayUnit,
+		terpakaiStr, terpakaiUnitStr,
+		sisaStr, sisaUnitStr, remainingInSmallestUnit/cycle.ConversionFactor, cycle.PurchaseUnit,
+		rateStr, rateUnitStr,
 		estimationDays,
 		cycle.StartDate.Format("02/01/2006"),
 	), nil

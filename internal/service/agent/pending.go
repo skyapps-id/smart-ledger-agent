@@ -24,6 +24,10 @@ type PendingChoice struct {
 	// ("1") di-resolve, pesan yang di-dispatch memakai teks ini lagi —
 	// penting untuk jalur yang butuh ekstraksi ulang (record_transaction).
 	OriginalText string
+	// FreeTextKey: bila diisi, jawaban user berupa teks bebas (bukan pilihan
+	// bernomor) dan diisikan ke param dengan key ini (mis. "15lt" untuk
+	// pertanyaan faktor konversi kemasan).
+	FreeTextKey string
 }
 
 // PendingConfirms menyimpan PendingChoice per chat (satu chat = satu
@@ -59,6 +63,24 @@ func (p *PendingConfirms) Resolve(chatID, text string) (domain.ServiceAction, st
 		return domain.ServiceAction{}, "", false
 	}
 
+	params := make(map[string]interface{}, len(pc.Params)+1)
+	for k, v := range pc.Params {
+		params[k] = v
+	}
+
+	// Jawaban teks bebas (mis. "15lt"): pesan berikutnya diterima apa adanya
+	// sebagai nilai param FreeTextKey — tanpa pencocokan opsi bernomor.
+	if pc.FreeTextKey != "" {
+		answer := strings.TrimSpace(text)
+		if answer == "" {
+			p.store.Delete(chatID)
+			return domain.ServiceAction{}, "", false
+		}
+		params[pc.FreeTextKey] = answer
+		p.store.Delete(chatID)
+		return domain.ServiceAction{Action: pc.Action, Params: params}, pc.OriginalText, true
+	}
+
 	idx := matchOption(pc.Options, strings.TrimSpace(text))
 	if idx < 0 {
 		// Bukan jawaban atas konfirmasi → batalkan pending, proses pesan normal.
@@ -66,10 +88,6 @@ func (p *PendingConfirms) Resolve(chatID, text string) (domain.ServiceAction, st
 		return domain.ServiceAction{}, "", false
 	}
 
-	params := make(map[string]interface{}, len(pc.Params)+1)
-	for k, v := range pc.Params {
-		params[k] = v
-	}
 	params[pc.OptionKey] = pc.Options[idx]
 	p.store.Delete(chatID)
 	return domain.ServiceAction{Action: pc.Action, Params: params}, pc.OriginalText, true

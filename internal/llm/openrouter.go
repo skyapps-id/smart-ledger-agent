@@ -38,6 +38,21 @@ type IntentExtractor interface {
 	ClassifyIntent(ctx context.Context, systemPrompt, rawText, sessionID string) (domain.ServiceAction, Usage, error)
 }
 
+// ConversionReasoning hasil penalaran konversi satuan oleh LLM.
+type ConversionReasoning struct {
+	Action      string  `json:"action"`       // "convert" | "ask" | "reject"
+	ContentQty  float64 `json:"content_qty"`  // isi per kemasan (hanya bila eksplisit)
+	ContentUnit string  `json:"content_unit"` // lt/ml/gr/kg/pcs
+	Question    string  `json:"question"`     // pertanyaan natural untuk user (action=ask)
+}
+
+// ConversionReasoner abstraksi penalaran konversi satuan kemasan via LLM:
+// dipakai hanya di jalur ambigu (faktor tidak diketahui kode) — kode tetap
+// memegang matematika & penyimpanan.
+type ConversionReasoner interface {
+	ReasonConversion(ctx context.Context, systemPrompt, rawText, sessionID string) (ConversionReasoning, Usage, error)
+}
+
 // New membuat klien OpenRouter dengan HTTP client default.
 func New(cfg config.LLMConfig) Extractor {
 	return &openRouterClient{
@@ -50,6 +65,16 @@ func New(cfg config.LLMConfig) Extractor {
 
 // NewIntentExtractor membuat klien OpenRouter untuk intent classification.
 func NewIntentExtractor(cfg config.LLMConfig) IntentExtractor {
+	return &openRouterClient{
+		cfg: cfg,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// NewConversionReasoner membuat klien OpenRouter untuk penalaran konversi.
+func NewConversionReasoner(cfg config.LLMConfig) ConversionReasoner {
 	return &openRouterClient{
 		cfg: cfg,
 		httpClient: &http.Client{
@@ -332,6 +357,82 @@ func parseIntentContent(content string) (domain.ServiceAction, error) {
 		return domain.ServiceAction{}, err
 	}
 	return a, nil
+}
+
+// ReasonConversion meminta LLM menalar konversi satuan dari konteks yang
+// dibawa rawText (disusun caller: pesan user, nama barang, satuan stok,
+// jumlah pemakaian). Hanya dipanggil di jalur ambigu.
+func (c *openRouterClient) ReasonConversion(ctx context.Context, systemPrompt, rawText, sessionID string) (ConversionReasoning, Usage, error) {
+	content, usage, err := c.doChat(ctx, systemPrompt, rawText, sessionID)
+	if err != nil {
+		return ConversionReasoning{}, usage, err
+	}
+
+	clean := extractJSON(content)
+	var r ConversionReasoning
+	if err := json.Unmarshal([]byte(clean), &r); err != nil {
+		return ConversionReasoning{}, usage, fmt.Errorf("parsing JSON LLM: %w", err)
+	}
+	return r, usage, nil
+}
+
+// doChat menjalankan chat completion sederhana (system+user) dan
+// mengembalikan konten jawaban beserta info usage-nya.
+func (c *openRouterClient) doChat(ctx context.Context, systemPrompt, rawText, sessionID string) (string, Usage, error) {
+	body := c.buildChatRequest([]chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: strings.TrimSpace(rawText)},
+	}, sessionID)
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", Usage{}, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return "", Usage{}, fmt.Errorf("buat request: %w", err)
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", Usage{}, &RequestError{Err: err}
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", Usage{}, fmt.Errorf("baca response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", Usage{}, ErrRateLimited
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", Usage{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, truncate(string(raw), 300))
+	}
+
+	var chat chatResponse
+	if err := json.Unmarshal(raw, &chat); err != nil {
+		return "", Usage{}, fmt.Errorf("decode response: %w", err)
+	}
+	if chat.Error != nil {
+		return "", Usage{}, errors.New(chat.Error.Message)
+	}
+	if len(chat.Choices) == 0 {
+		return "", Usage{}, errors.New("respons LLM kosong")
+	}
+
+	usage := Usage{}
+	if chat.Usage != nil {
+		usage.PromptTokens = chat.Usage.PromptTokens
+		usage.CompletionTokens = chat.Usage.CompletionTokens
+		usage.TotalTokens = chat.Usage.TotalTokens
+		usage.PromptCacheHitTokens = cacheHitTokens(chat.Usage)
+		usage.CostUSD = calculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptCacheHitTokens)
+	}
+	return chat.Choices[0].Message.Content, usage, nil
 }
 
 // extractJSON mengambil substring JSON pertama (antara { dan } terakhir).

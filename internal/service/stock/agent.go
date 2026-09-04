@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -21,6 +22,7 @@ type stockAgent struct {
 	// dipakai bila agent diberi LLM call sendiri.
 	systemPrompt string
 	invRepo      repository.InventoryRepository
+	txnRepo      repository.TransactionRepository
 	sender       agent.MessageSender
 	log          *slog.Logger
 }
@@ -28,10 +30,18 @@ type stockAgent struct {
 func NewAgent(
 	db *gorm.DB,
 	invRepo repository.InventoryRepository,
+	txnRepo repository.TransactionRepository,
 	sender agent.MessageSender,
 	logger *slog.Logger,
 ) agent.SubAgent {
-	return &stockAgent{db: db, systemPrompt: stockSystemPrompt, invRepo: invRepo, sender: sender, log: logger}
+	return &stockAgent{
+		db:           db,
+		systemPrompt: stockSystemPrompt,
+		invRepo:      invRepo,
+		txnRepo:      txnRepo,
+		sender:       sender,
+		log:          logger,
+	}
 }
 
 func (a *stockAgent) Actions() []string {
@@ -85,10 +95,12 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 				return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Tidak ada item '%s' di inventaris.", itemFilter), intentCost)
 			}
 
-			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, formatStock(filteredItems, itemFilter), intentCost)
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+				formatStock(filteredItems, itemFilter, a.lastPurchases(ctx, msg.ChatID, filteredItems)), intentCost)
 		}
 
-		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, formatStock(items, itemFilter), intentCost)
+		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+			formatStock(items, itemFilter, a.lastPurchases(ctx, msg.ChatID, items)), intentCost)
 	}
 
 	// General query "stok" → tampilkan summary kategori untuk hemat tokens
@@ -112,4 +124,18 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 	reply.WriteString("\n\n💡 Ketik 'stok [kategori]' untuk detail (contoh: 'stok minuman')")
 
 	return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, reply.String(), intentCost)
+}
+
+// lastPurchases mengambil pembelian (harga) terakhir tiap item dari
+// riwayat transaksi untuk ditampilkan di balasan stok.
+func (a *stockAgent) lastPurchases(ctx context.Context, chatID string, items []domain.Inventory) map[string]*domain.Transaction {
+	last := make(map[string]*domain.Transaction, len(items))
+	for _, it := range items {
+		txn, err := a.txnRepo.WithTx(a.db).LastExpenseByItem(ctx, chatID, it.ItemName, 0, time.Now())
+		if err != nil || txn == nil {
+			continue
+		}
+		last[it.ItemName] = txn
+	}
+	return last
 }

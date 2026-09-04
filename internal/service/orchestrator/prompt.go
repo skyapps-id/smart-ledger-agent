@@ -12,7 +12,7 @@ ACTIONS & PARAMS:
 1. init — aktivasi ledger ("init","mulai","daftar","aktivasi","start" di awal pesan). ledger_name? (mis. "init dompetku")
 2. help — panduan ("bantuan","bantu","panduan","menu","format","help","cara pakai","guna"). params {}
 3. info — identitas sesi/chat ("info","sesi","session","debug","identitas"). params {}
-4. get_stock — query stok ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]"). item_filter? ("stok kecap" → "kecap")
+4. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]"). item_filter? ("stok kecap" → "kecap")
 5. get_report — laporan keuangan/pemakaian ("pengeluaran","pengeluaran apa aja","pemasukan","pendapatan","laporan","ringkasan","rekap","total","boros","cash flow","arus kas","sisa uang","sisa dana","sisa kas","uang saya").
    report_type=summary|income|expense|expense_by_item|consumption; period=today|yesterday|this_week|last_week|this_month|last_month|custom|all; item_filter?; from_date?,to_date? (YYYY-MM-DD; wajib saat period=custom; "01/08" → tahun berjalan).
 6. consumption — pemakaian stok ("pakai","sudah/udah pakai","dipakai","ambil","terpakai","sudah terpakai","habis","konsumsi","pemakaian","barang/item aktif","history konsumsi").
@@ -27,7 +27,7 @@ PRIORITAS (cek berurutan, berhenti di kecocokan pertama):
 4. "konsumsi"/"pemakaian"/"barang aktif" → consumption (tanpa item → list, ada item → info). BUKAN get_report meski ada kata "analisa".
 5. "init"/"mulai"/"daftar"/"aktivasi"/"start" di awal pesan → init.
 6. "bantuan" dll → help; "info"/"sesi"/"debug" → info.
-7. "beli"/"bayar"/"jual"/"gaji"/"terima"/"top up" dll ATAU nominal uang → record_transaction, walau menyebut "stok" ("beli stok kecap 50rb" = transaksi, bukan query).
+7. "beli"/"bayar"/"jual"/"gaji"/"terima"/"top up" dll ATAU nominal uang → record_transaction, walau menyebut "stok" ("beli stok kecap 50rb" = transaksi, bukan query). KECUALI ada kata "harga" (query harga beli, bukan pencatatan) → get_stock.
 8. "stok"/"sisa"/"persediaan"/"inventaris" + BARANG → get_stock. CATATAN: "sisa uang/dana/kas" atau "berapa sisa saldo" → get_report (uang), sedangkan "sisa barang/stok/minyak" → get_stock (barang).
 9. "pengeluaran"/"pemasukan"/"laporan"/"ringkasan"/"total"/"rekap" → get_report.
 10. sisanya → none.
@@ -41,6 +41,7 @@ CONTOH:
 "stok" → {"action":"get_stock","params":{}}
 "stok kecap" → {"action":"get_stock","params":{"item_filter":"kecap"}}
 "berapa stok kecap?" → {"action":"get_stock","params":{"item_filter":"kecap"}}
+"harga beli terakhir susu bmt 800g" → {"action":"get_stock","params":{"item_filter":"susu bmt 800g"}}
 "masih ada susu gak?" → {"action":"get_stock","params":{"item_filter":"susu"}}
 "persedian" → {"action":"get_stock","params":{}}
 "pengeluaran hari ini berapa" → {"action":"get_report","params":{"report_type":"expense","period":"today"}}

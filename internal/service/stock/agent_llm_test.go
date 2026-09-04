@@ -194,7 +194,7 @@ func TestFullStockQueryFlow(t *testing.T) {
 		{ItemName: "Kecap Asin", StockQty: 3.0, Unit: "botol"},
 	}
 
-	response := formatStock(mockItems, itemFilter)
+	response := formatStock(mockItems, itemFilter, nil)
 	t.Logf("   ✅ Response Generated:")
 	for _, line := range []string{response} {
 		t.Logf("      %s", line)

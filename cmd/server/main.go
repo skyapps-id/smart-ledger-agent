@@ -93,7 +93,7 @@ func main() {
 
 	agents := []agent.SubAgent{
 		transaction.NewAgent(db, txnRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
-		stock.NewAgent(db, invRepo, replySender, logger),
+		stock.NewAgent(db, invRepo, txnRepo, replySender, logger),
 		consumption.NewAgent(db, invRepo, logRepo, consumptionService, invCache, pendingConfirms, replySender, logger),
 		report.NewAgent(db, txnRepo, logRepo, replySender, logger),
 		system.NewAgent(db, chatRepo, txnRepo, replySender, logger),

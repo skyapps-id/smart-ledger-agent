@@ -10,8 +10,13 @@ type IncomingMessage struct {
 	ChatID    string // pemilik ledger (partition key): phone@c.us / id@g.us
 	Text      string
 
+	// TaskID adalah ID korelasi end-to-end (handler → worker → orchestrator
+	// → sub-agent → reply). Dibuat di webhook, dibawa di semua log sehingga
+	// satu pesan bisa dipantau lewat satu ID.
+	TaskID string
+
 	// Metadata sesi WAHA (audit/diagnostic). Dipakai command `info`
-	// (lihat service.handleInfo) untuk memperlihatkan identitas sesi ke user.
+	// (lihat system agent, internal/service/system) untuk memperlihatkan identitas sesi ke user.
 	SessionName string // p.Session (mis. "default")
 	BotID       string // p.Me.ID (mis. "6281380211359@c.us")
 	BotLid      string // p.Me.Lid (mis. "159948994543807@lid")

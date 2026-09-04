@@ -1,5 +1,5 @@
 // Package service tests untuk consumption service dengan tanggal pembelian dan habis.
-package service
+package consumption
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func setupConsumptionTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 
-	err = db.AutoMigrate(&domain.ConsumptionCycle{})
+	err = db.AutoMigrate(&domain.ConsumptionCycle{}, &domain.Good{})
 	require.NoError(t, err)
 
 	return db
@@ -30,17 +30,19 @@ func TestConsumptionWithDateRange(t *testing.T) {
 	db := setupConsumptionTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-123"
-	itemName := "Susu"
+	susu := mustGood(t, db, "Susu")
+	mie := mustGood(t, db, "Mie Instan")
+	kopi := mustGood(t, db, "Kopi")
 
 	t.Run("Start cycle dengan tanggal pembelian spesifik", func(t *testing.T) {
 		purchaseDate, _ := time.Parse("2006-01-02", "2026-08-01")
-		cycle, err := service.StartCycleWithDate(ctx, chatID, itemName, 2.0, "kaleng", 400.0, purchaseDate)
+		cycle, err := service.StartCycleWithDate(ctx, chatID, susu, 2.0, "kaleng", 400.0, purchaseDate)
 		require.NoError(t, err)
-		assert.Equal(t, itemName, cycle.ItemName)
+		assert.Equal(t, susu.ID, cycle.GoodsID)
 		assert.Equal(t, 2.0, cycle.PurchaseQty)
 		assert.Equal(t, "kaleng", cycle.PurchaseUnit)
 		assert.Equal(t, 400.0, cycle.ConversionFactor)
@@ -49,7 +51,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 
 	t.Run("Complete cycle dengan tanggal habis dan hitung konsumsi harian", func(t *testing.T) {
 		endDate, _ := time.Parse("2006-01-02", "2026-08-30")
-		cycle, err := service.CompleteCycleWithEndDate(ctx, chatID, itemName, endDate)
+		cycle, err := service.CompleteCycleWithEndDate(ctx, chatID, susu, endDate)
 		require.NoError(t, err)
 		assert.Equal(t, domain.ConsumptionCycleCompleted, cycle.Status)
 		assert.True(t, cycle.EndDate != nil)
@@ -62,8 +64,8 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		actualDays := endDate.Sub(cycle.StartDate).Hours() / 24
 		assert.InDelta(t, expectedDays, actualDays, 0.5)
 
-		actualTotalConsumed := cycle.ConsumedQty * cycle.ConversionFactor
-		assert.InDelta(t, 800.0, actualTotalConsumed, 1.0)
+		// ConsumedQty sudah dalam satuan dasar (gr) — bukan dikali factor lagi.
+		assert.InDelta(t, 800.0, cycle.ConsumedQty, 1.0)
 	})
 
 	t.Run("Calculate daily consumption tanpa menyimpan cycle", func(t *testing.T) {
@@ -73,19 +75,18 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		result, err := service.CalculateDailyConsumption(ctx, chatID, "Susu UHT", purchaseDate, endDate, 6.0, "kaleng", 1000.0)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Susu UHT")
-		assert.Contains(t, result, "6000 gr")       // 6 x 1000
+		assert.Contains(t, result, "6000 gr")       // tanpa satuan asli user → satuan dasar, TIDAK auto-upgrade ke kg
 		assert.Contains(t, result, "206.9 gr/hari") // 6000 / 29 hari = 206.9
 	})
 
 	t.Run("Error handling - tanggal habis sebelum pembelian", func(t *testing.T) {
 		// Buat cycle aktif baru untuk test ini
-		newItem := "Mie Instan"
 		purchaseDate, _ := time.Parse("2006-01-02", "2026-08-15")
-		_, _ = service.StartCycleWithDate(ctx, chatID, newItem, 10.0, "bungkus", 100.0, purchaseDate)
+		_, _ = service.StartCycleWithDate(ctx, chatID, mie, 10.0, "bungkus", 100.0, purchaseDate)
 
 		endDate, _ := time.Parse("2006-01-02", "2026-08-01") // End date before purchase
 
-		_, err := service.CompleteCycleWithEndDate(ctx, chatID, newItem, endDate)
+		_, err := service.CompleteCycleWithEndDate(ctx, chatID, mie, endDate)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "tanggal habis harus setelah tanggal pembelian")
 	})
@@ -93,15 +94,14 @@ func TestConsumptionWithDateRange(t *testing.T) {
 	t.Run("Get active cycle info dalam satuan terkecil", func(t *testing.T) {
 		// Buat cycle aktif baru
 		purchaseDate, _ := time.Parse("2006-01-02", "2026-08-05")
-		newItem := "Kopi"
-		_, err := service.StartCycleWithDate(ctx, chatID, newItem, 1.0, "kg", 1000.0, purchaseDate)
+		_, err := service.StartCycleWithDate(ctx, chatID, kopi, 1.0, "kg", 1000.0, purchaseDate)
 		require.NoError(t, err)
 
-		info, err := service.GetActiveCycleInfo(ctx, chatID, newItem, "")
+		info, err := service.GetActiveCycleInfo(ctx, chatID, kopi, "")
 		require.NoError(t, err)
 		assert.Contains(t, info, "Kopi")
-		assert.Contains(t, info, "1000 gr") // 1 kg = 1000 gr
-		assert.Contains(t, info, "gr/hari") // Rate dalam gram per hari
+		assert.Contains(t, info, "1 kg") // satuan beli user = kg → tampil dalam kg
+		assert.Contains(t, info, "kg/hari")
 	})
 }
 
@@ -109,24 +109,25 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 	db := setupConsumptionTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-history"
+	teh := mustGood(t, db, "Teh")
 
 	// Buat beberapa cycle yang sudah selesai
 	date1, _ := time.Parse("2006-01-02", "2026-07-01")
 	date2, _ := time.Parse("2006-01-02", "2026-07-15")
-	_, _ = service.StartCycleWithDate(ctx, chatID, "Teh", 10.0, "bungkus", 50.0, date1)
-	service.CompleteCycleWithEndDate(ctx, chatID, "Teh", date2)
+	_, _ = service.StartCycleWithDate(ctx, chatID, teh, 10.0, "bungkus", 50.0, date1)
+	service.CompleteCycleWithEndDate(ctx, chatID, teh, date2)
 
 	date3, _ := time.Parse("2006-01-02", "2026-07-16")
 	date4, _ := time.Parse("2006-01-02", "2026-07-25")
-	service.StartCycleWithDate(ctx, chatID, "Teh", 8.0, "bungkus", 50.0, date3)
-	service.CompleteCycleWithEndDate(ctx, chatID, "Teh", date4)
+	service.StartCycleWithDate(ctx, chatID, teh, 8.0, "bungkus", 50.0, date3)
+	service.CompleteCycleWithEndDate(ctx, chatID, teh, date4)
 
 	t.Run("Get history menampilkan daily rate dalam gram", func(t *testing.T) {
-		history, err := service.GetHistory(ctx, chatID, "Teh", 10)
+		history, err := service.GetHistory(ctx, chatID, teh, 10)
 		require.NoError(t, err)
 		assert.Contains(t, history, "Teh")
 		assert.Contains(t, history, "gr/hari") // Harus menampilkan rate dalam gram per hari
@@ -172,7 +173,12 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 
 				result, err := service.CalculateDailyConsumption(ctx, chatID, "Test Item", start, end, tc.purchaseQty, tc.purchaseUnit, tc.convFactor)
 				require.NoError(t, err)
-				assert.Contains(t, result, "gr/hari")
+				// Rate tampil dalam satuan user: "kaleng" bukan base → gr; "kg" → kg.
+				wantUnit := "gr/hari"
+				if tc.purchaseUnit == "kg" {
+					wantUnit = "kg/hari"
+				}
+				assert.Contains(t, result, wantUnit)
 			})
 		}
 	})

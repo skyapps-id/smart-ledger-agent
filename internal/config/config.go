@@ -19,8 +19,9 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Env  string
-	Port string
+	Env     string
+	Port    string
+	DevMode bool // aktifkan endpoint test POST /dev/message (tanpa WAHA)
 }
 
 type DBConfig struct {
@@ -60,6 +61,9 @@ func Load() (*Config, error) {
 		App: AppConfig{
 			Env:  env("APP_ENV", "development"),
 			Port: env("APP_PORT", "8080"),
+			// Default aktif di development; di production harus
+			// di-set eksplisit via APP_DEV_MODE=true (tidak disarankan).
+			DevMode: envBool("APP_DEV_MODE", env("APP_ENV", "development") == "development"),
 		},
 		DB: DBConfig{
 			DSN: env("DB_DSN", "host=localhost user=postgres password=postgres dbname=smart_ledger port=5432 sslmode=disable timezone=Asia/Jakarta"),
@@ -71,9 +75,9 @@ func Load() (*Config, error) {
 			WebhookToken: env("WAHA_WEBHOOK_TOKEN", ""),
 		},
 		LLM: LLMConfig{
-			BaseURL: env("LLM_BASE_URL", env("OPENROUTER_BASE_URL", "https://api.deepseek.com")),
-			APIKey:  env("LLM_API_KEY", env("OPENROUTER_API_KEY", "")),
-			Model:   env("LLM_MODEL", env("OPENROUTER_MODEL", "deepseek-chat")),
+			BaseURL: env("LLM_BASE_URL", env("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4")),
+			APIKey:  env("LLM_API_KEY", env("ZAI_API_KEY", "")),
+			Model:   env("LLM_MODEL", env("ZAI_MODEL", "glm-5.3-flash")),
 		},
 		Worker: WorkerConfig{
 			Concurrency: envInt("WORKER_CONCURRENCY", 4), // LLM workers tetap concurrent
@@ -95,7 +99,7 @@ func Load() (*Config, error) {
 
 func (c *Config) validate() error {
 	if c.LLM.APIKey == "" {
-		return fmt.Errorf("OPENROUTER_API_KEY wajib diisi")
+		return fmt.Errorf("LLM_API_KEY wajib diisi")
 	}
 	return nil
 }
@@ -103,6 +107,15 @@ func (c *Config) validate() error {
 func env(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
 	}
 	return fallback
 }

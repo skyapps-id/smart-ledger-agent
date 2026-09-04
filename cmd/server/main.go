@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/patrickmn/go-cache"
+
 	"smart-ledger-agent/internal/config"
 	"smart-ledger-agent/internal/database"
 	"smart-ledger-agent/internal/handler"
@@ -18,7 +20,13 @@ import (
 	"smart-ledger-agent/internal/repository"
 	"smart-ledger-agent/internal/router"
 	"smart-ledger-agent/internal/sender"
-	"smart-ledger-agent/internal/service"
+	"smart-ledger-agent/internal/service/agent"
+	"smart-ledger-agent/internal/service/consumption"
+	"smart-ledger-agent/internal/service/orchestrator"
+	"smart-ledger-agent/internal/service/report"
+	"smart-ledger-agent/internal/service/stock"
+	"smart-ledger-agent/internal/service/system"
+	"smart-ledger-agent/internal/service/transaction"
 	"smart-ledger-agent/internal/waha"
 	"smart-ledger-agent/internal/worker"
 )
@@ -43,6 +51,7 @@ func main() {
 	// ── Repositories ──
 	chatRepo := repository.NewChatRepository(db)
 	txnRepo := repository.NewTransactionRepository(db)
+	goodsRepo := repository.NewGoodsRepository(db)
 	invRepo := repository.NewInventoryRepository(db)
 	logRepo := repository.NewStockLogRepository(db)
 	consumptionCycleRepo := repository.NewConsumptionCycleRepository(db)
@@ -50,6 +59,7 @@ func main() {
 	// ── External clients ──
 	extractor := llm.New(cfg.LLM)
 	intentExtractor := llm.NewIntentExtractor(cfg.LLM)
+	conversionReasoner := llm.NewConversionReasoner(cfg.LLM)
 	wahaSender := waha.New(cfg.WAHA)
 
 	// ── WAHA Sender Worker (Sequential dengan Rate Limiting) ──
@@ -65,8 +75,32 @@ func main() {
 	)
 	wahaSenderWorker.Start()
 
-	// ── Service ──
-	agent := service.NewAgent(db, chatRepo, txnRepo, invRepo, logRepo, consumptionCycleRepo, extractor, intentExtractor, wahaSenderWorker, logger)
+	// Reply sender: sender asli dibungkus Capture — merekam balasan per task
+	// ID (dipakai /dev/message untuk mengembalikan balasan di response HTTP)
+	// sambil tetap meneruskan ke WAHA. Overhead tanpa waiter: satu map lookup.
+	replySender := sender.NewCapture(wahaSenderWorker)
+
+	// ── Sub-agents (spesialis domain) ──
+	// Semua wiring DI ada di sini (composition root): orchestrator tidak
+	// import package domain sama sekali, cukup menerima []agent.SubAgent.
+	consumptionService := consumption.NewService(db, consumptionCycleRepo, logger)
+	// invCache di-share antar agent: diisi transactionAgent (snapshot konteks
+	// LLM), di-invalidate siapa pun yang mengubah stok (transaksi/pemakaian).
+	invCache := cache.New(5*time.Minute, 10*time.Minute)
+
+	// Konfirmasi pending (mis. pilihan batch bernomor): di-share antara
+	// consumption agent (mendaftarkan pilihan) dan orchestrator (resolve
+	// jawaban "1"/"2" tanpa LLM hop).
+	pendingConfirms := agent.NewPendingConfirms()
+
+	agents := []agent.SubAgent{
+		transaction.NewAgent(db, txnRepo, goodsRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
+		stock.NewAgent(db, goodsRepo, invRepo, txnRepo, replySender, logger),
+		consumption.NewAgentWithReasoner(db, goodsRepo, invRepo, logRepo, consumptionService, invCache, pendingConfirms, conversionReasoner, replySender, logger),
+		report.NewAgent(db, txnRepo, logRepo, replySender, logger),
+		system.NewAgent(db, chatRepo, txnRepo, replySender, logger),
+	}
+	orch := orchestrator.New(agents, chatRepo, intentExtractor, replySender, pendingConfirms, logger)
 
 	// ── Worker pool (LLM processing, concurrent) ──
 	pool := worker.New(
@@ -75,14 +109,23 @@ func main() {
 			QueueSize:   cfg.Worker.QueueSize,
 			MaxRetries:  cfg.Worker.MaxRetries,
 		},
-		agent,
+		orch,
 		logger,
 	)
 
 	// ── HTTP (Echo) ──
 	webhook := handler.NewWebhook(pool, cfg.WAHA.WebhookToken, logger)
 	health := handler.NewHealth()
-	e := router.New(webhook, health)
+
+	// Endpoint test tanpa WAHA — hanya terpasang saat dev mode aktif.
+	var devHandler *handler.DevHandler
+	if cfg.App.DevMode {
+		devHandler = handler.NewDevMessage(pool, replySender, logger)
+		logger.Info("dev endpoint aktif", "path", "POST /dev/message", "contoh",
+			`curl -X POST localhost:`+cfg.App.Port+`/dev/message -H 'Content-Type: application/json' -d '{"chat_id":"628123456789@c.us","text":"beli kopi 15rb"}'`)
+	}
+
+	e := router.New(webhook, health, devHandler)
 
 	addr := ":" + cfg.App.Port
 

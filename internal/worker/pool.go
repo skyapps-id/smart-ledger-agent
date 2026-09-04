@@ -13,7 +13,7 @@ import (
 	"smart-ledger-agent/internal/llm"
 )
 
-// Processor adalah dependency worker (umumnya *service.Agent).
+// Processor adalah dependency worker (umumnya *orchestrator.Orchestrator).
 type Processor interface {
 	Process(ctx context.Context, msg entity.IncomingMessage) error
 }
@@ -66,7 +66,7 @@ func (p *Pool) Enqueue(msg entity.IncomingMessage) bool {
 	case p.jobs <- msg:
 		return true
 	default:
-		p.log.Warn("antrean penuh, pesan di-drop", "chat", msg.ChatID, "sender", msg.UserPhone)
+		p.log.Warn("antrean penuh, pesan di-drop", "task", msg.TaskID, "chat", msg.ChatID, "sender", msg.UserPhone)
 		return false
 	}
 }
@@ -95,13 +95,13 @@ func (p *Pool) processWithRetry(msg entity.IncomingMessage) {
 		lastErr = err
 
 		if !llm.IsRetryable(err) {
-			p.log.Error("job gagal (tidak retryable)", "err", err, "chat", msg.ChatID, "sender", msg.UserPhone)
+			p.log.Error("job gagal (tidak retryable)", "task", msg.TaskID, "chat", msg.ChatID, "sender", msg.UserPhone)
 			return
 		}
 
 		delay := time.Duration(math.Pow(2, float64(attempt))) * baseDelay
 		p.log.Warn("job retryable, menjadwalkan ulang",
-			"attempt", attempt+1, "delay", delay, "err", err)
+			"task", msg.TaskID, "attempt", attempt+1, "delay", delay, "err", err)
 
 		select {
 		case <-p.quit:
@@ -109,7 +109,7 @@ func (p *Pool) processWithRetry(msg entity.IncomingMessage) {
 		case <-time.After(delay):
 		}
 	}
-	p.log.Error("job gagal setelah retry habis", "err", lastErr, "chat", msg.ChatID, "sender", msg.UserPhone)
+	p.log.Error("job gagal setelah retry habis", "task", msg.TaskID, "err", lastErr, "chat", msg.ChatID, "sender", msg.UserPhone)
 }
 
 // Shutdown menghentikan worker pool secara graceful (tunggu sisa job selesai

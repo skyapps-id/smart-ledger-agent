@@ -1,4 +1,4 @@
-package service
+package agent
 
 // OnboardingTemplate dikirim saat user pertama kali mengontak
 // atau meminta bantuan. Menjelaskan format pencatatan.

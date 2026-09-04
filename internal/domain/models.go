@@ -31,18 +31,21 @@ func (Chat) TableName() string { return "chats" }
 // ChatID = pemilik ledger (partition key). SenderPhone = pengirim asli
 // pesan tersebut (audit trail; di group bisa berbeda-beda per transaksi).
 type Transaction struct {
-	ID              int64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	ChatID          string          `gorm:"size:64;index" json:"chat_id"`
-	SenderPhone     string          `gorm:"size:32" json:"sender_phone"`
-	Type            TransactionType `gorm:"size:16" json:"type"`
-	Category        string          `gorm:"size:32" json:"category"`
-	ItemName        string          `gorm:"size:128" json:"item_name"`
-	Amount          float64         `gorm:"type:numeric(15,2)" json:"amount"`
-	RawPayload      string          `gorm:"type:text" json:"raw_payload"`
-	TransactionDate time.Time       `gorm:"type:date" json:"transaction_date"`        // tanggal transaksi (bisa beda dari created_at)
-	ConsumptionDate *time.Time      `gorm:"type:date" json:"consumption_date"`        // tanggal barang habis (nullable)
-	TotalConsumed   float64         `gorm:"type:numeric(15,2)" json:"total_consumed"` // jumlah yang benar-benar habis dipakai
-	CreatedAt       time.Time       `json:"created_at"`
+	ID          int64           `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID      string          `gorm:"size:64;index" json:"chat_id"`
+	SenderPhone string          `gorm:"size:32" json:"sender_phone"`
+	Type        TransactionType `gorm:"size:16" json:"type"`
+	Category    string          `gorm:"size:32" json:"category"`
+	// GoodsID = relasi ke master goods; ItemName tetap disimpan sebagai
+	// snapshot display (dipakai grouping laporan) — relasi tetap via id.
+	GoodsID         int64      `gorm:"index" json:"goods_id"`
+	ItemName        string     `gorm:"size:128" json:"item_name"`
+	Amount          float64    `gorm:"type:numeric(15,2)" json:"amount"`
+	RawPayload      string     `gorm:"type:text" json:"raw_payload"`
+	TransactionDate time.Time  `gorm:"type:date" json:"transaction_date"`        // tanggal transaksi (bisa beda dari created_at)
+	ConsumptionDate *time.Time `gorm:"type:date" json:"consumption_date"`        // tanggal barang habis (nullable)
+	TotalConsumed   float64    `gorm:"type:numeric(15,2)" json:"total_consumed"` // jumlah yang benar-benar habis dipakai
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 func (Transaction) TableName() string { return "transactions" }
@@ -55,17 +58,30 @@ const (
 	StockOut ChangeType = "OUT"
 )
 
-// Inventory adalah master stok barang per chat (ledger).
+// Inventory adalah master stok barang per chat (ledger), direlasikan ke
+// master global goods via GoodsID — BUKAN lagi via nama barang.
 type Inventory struct {
-	ID        int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	ChatID    string    `gorm:"size:64;uniqueIndex:idx_inv_chat_item" json:"chat_id"`
-	ItemName  string    `gorm:"size:128;uniqueIndex:idx_inv_chat_item" json:"item_name"`
-	StockQty  float64   `gorm:"type:numeric(12,2)" json:"stock_qty"`
-	Unit      string    `gorm:"size:32" json:"unit"`
+	ID       int64   `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID   string  `gorm:"size:64;uniqueIndex:idx_inv_chat_goods" json:"chat_id"`
+	GoodsID  int64   `gorm:"uniqueIndex:idx_inv_chat_goods" json:"goods_id"`
+	Good     *Good   `gorm:"foreignKey:GoodsID" json:"good,omitempty"`
+	StockQty float64 `gorm:"type:numeric(12,2)" json:"stock_qty"`
+	Unit     string  `gorm:"size:32" json:"unit"`
+	// Faktor konversi (1 Unit = FactorUom ConversionUom, mis. 1 galon = 15 lt)
+	// hidup di master goods — bukan lagi kolom inventory.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (Inventory) TableName() string { return "inventory" }
+
+// Name mengembalikan nama barang dari relasi goods (display). Kosong bila
+// relasi tidak di-preload — pastikan repo selalu preload.
+func (i Inventory) Name() string {
+	if i.Good == nil {
+		return ""
+	}
+	return i.Good.Name
+}
 
 // StockLog mencatat riwayat perubahan stok (audit trail).
 type StockLog struct {
@@ -78,6 +94,24 @@ type StockLog struct {
 }
 
 func (StockLog) TableName() string { return "stock_logs" }
+
+// Good adalah master katalog barang GLOBAL (bersama lintas chat/ledger).
+// Uom = satuan kanonik barang (mis. "galon"); ConversionUom + FactorUom =
+// faktor konversi resmi (1 Uom = FactorUom ConversionUom, mis. 19 lt).
+// Master ini sumber kebenaran satuan: prompt LLM dilarang mengarang UOM /
+// faktor konversi dan wajib merujuk ke sini.
+type Good struct {
+	ID            int64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	Code          string    `gorm:"size:32;uniqueIndex" json:"code"`
+	Name          string    `gorm:"size:128;index" json:"name"`
+	Uom           string    `gorm:"size:32" json:"uom"`
+	ConversionUom string    `gorm:"size:32" json:"conversion_uom"`
+	FactorUom     float64   `gorm:"type:numeric(12,3)" json:"factor_uom"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (Good) TableName() string { return "goods" }
 
 // Extraction adalah contract JSON yang dikembalikan oleh LLM.
 // Sesuai RFC §5.1 dan §6.1.

@@ -1,4 +1,4 @@
-package service
+package report
 
 import (
 	"testing"
@@ -71,7 +71,7 @@ func TestNoRegexInCustomDateParsing(t *testing.T) {
 	t.Log("     }")
 	t.Log("   }")
 
-	// Test parsing dari LLM parameters
+	// Test parsing dari LLM parameters (from = awal hari, to = akhir hari)
 	fromDate := "01/08/2026"
 	toDate := "11/08/2026"
 
@@ -80,7 +80,7 @@ func TestNoRegexInCustomDateParsing(t *testing.T) {
 		t.Errorf("Failed to parse from_date: %v", err)
 	}
 
-	to, err := parseLLMDate(toDate)
+	to, err := ParseLLMDateEnd(toDate)
 	if err != nil {
 		t.Errorf("Failed to parse to_date: %v", err)
 	}
@@ -117,8 +117,11 @@ func TestNoRegexInCustomDateParsing(t *testing.T) {
 	}
 
 	duration := to.Sub(from).Hours() / 24
-	if duration != expectedDuration {
-		t.Errorf("Expected duration %.0f hari, got %.0f hari", expectedDuration, duration)
+	// Rentang inklusif 01/08 s/d 11/08: from awal hari + to akhir hari
+	// menghasilkan ~11 hari elapse (10 hari rentang tanggal + detik terakhir).
+	// Yang penting bukan 11 hari penuh dan tidak kurang dari 10 hari.
+	if duration < expectedDuration || duration >= expectedDuration+1 {
+		t.Errorf("Expected duration %.0f s/d %.0f hari, got %.2f hari", expectedDuration, expectedDuration+1, duration)
 	}
 
 	t.Logf("✅ Date parsing validation successful!")

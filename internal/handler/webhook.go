@@ -12,6 +12,7 @@ import (
 
 	"smart-ledger-agent/internal/entity"
 	"smart-ledger-agent/internal/handler/model"
+	"smart-ledger-agent/internal/service/agent"
 )
 
 // MessageQueue abstraksi antrean pesan (diimplementasikan *worker.Pool).
@@ -36,9 +37,15 @@ func NewWebhook(queue MessageQueue, token string, logger *slog.Logger) *WebhookH
 
 // Handle menerima webhook WAHA, memvalidasi, lalu memasukkan pesan ke antrean.
 // Selalu membalas 200 OK dengan cepat (< 50ms) untuk mencegah retry WAHA.
+// Setiap request yang valid mendapat TaskID (header X-Task-ID) yang dibawa
+// sampai balasan, sehingga satu pesan bisa dipantau lewat satu ID di log.
 func (h *WebhookHandler) Handle(c echo.Context) error {
+	taskID := agent.NewTaskID()
+	log := h.log.With("task", taskID)
+	c.Response().Header().Set("X-Task-ID", taskID)
+
 	if !h.validateToken(c) {
-		h.log.Warn("webhook: token tidak cocok")
+		log.Warn("webhook: token tidak cocok")
 		return c.JSON(http.StatusUnauthorized, echo.Map{"error": "unauthorized"})
 	}
 
@@ -47,15 +54,15 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": "bad request"})
 	}
-	h.log.Info("webhook masuk", "raw", string(raw))
+	log.Info("webhook masuk", "raw", string(raw))
 
 	var p model.WahaPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		h.log.Error("webhook: gagal decode JSON", "err", err)
+		log.Error("webhook: gagal decode JSON", "err", err)
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": "bad request"})
 	}
 
-	h.log.Info("webhook parsed",
+	log.Info("webhook parsed",
 		"event", p.Event,
 		"from", p.Payload.From,
 		"author", p.Payload.Author,
@@ -68,7 +75,7 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 
 	// Hanya proses pesan masuk dari pengguna (bukan pesan sendiri).
 	if p.Event != "message" || p.Payload.FromMe {
-		h.log.Info("webhook: pesan di-ignore", "event", p.Event, "fromMe", p.Payload.FromMe)
+		log.Info("webhook: pesan di-ignore", "event", p.Event, "fromMe", p.Payload.FromMe)
 		return c.JSON(http.StatusOK, echo.Map{"status": "ignored"})
 	}
 
@@ -77,14 +84,14 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 	chatID := strings.TrimSpace(p.Payload.From)
 	text := stripBotMention(p.Payload.Body, p)
 	if chatID == "" || text == "" {
-		h.log.Info("webhook: di-ignore (chatID/body kosong)")
+		log.Info("webhook: di-ignore (chatID/body kosong)")
 		return c.JSON(http.StatusOK, echo.Map{"status": "ignored"})
 	}
 
 	// Di group: hanya respon saat bot di-@mention (anti-spam).
 	isGroup := strings.HasSuffix(chatID, "@g.us")
 	if isGroup && !isBotMentioned(p) {
-		h.log.Info("webhook: group tanpa mention, di-ignore", "chat", chatID)
+		log.Info("webhook: group tanpa mention, di-ignore", "chat", chatID)
 		return c.JSON(http.StatusOK, echo.Map{"status": "ignored"})
 	}
 
@@ -92,14 +99,17 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 		UserPhone:   extractSender(p),
 		ChatID:      chatID,
 		Text:        text,
+		TaskID:      taskID,
 		SessionName: p.Session,
 		BotID:       p.Me.ID,
 		BotLid:      p.Me.Lid,
 	}
 
 	if !h.queue.Enqueue(msg) {
-		h.log.Warn("webhook: antrean penuh", "chat", msg.ChatID, "sender", msg.UserPhone)
+		log.Warn("webhook: antrean penuh", "chat", msg.ChatID, "sender", msg.UserPhone)
 		// Tetap 200 agar WAHA tidak retry endlessly.
+	} else {
+		log.Info("webhook: pesan masuk antrean worker", "chat", msg.ChatID, "sender", msg.UserPhone)
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{"status": "queued"})

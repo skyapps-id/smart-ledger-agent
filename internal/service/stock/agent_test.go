@@ -1,8 +1,10 @@
-package service
+package stock
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"smart-ledger-agent/internal/domain"
 )
@@ -77,21 +79,43 @@ func TestIntentClassificationGetStock(t *testing.T) {
 func TestFormatStockResponse(t *testing.T) {
 	items := []domain.Inventory{
 		{
-			ItemName: "Kecap Manis",
+			Good:     &domain.Good{Name: "Kecap Manis"},
 			StockQty: 5.0,
 			Unit:     "botol",
 		},
 		{
-			ItemName: "Kecap Asin",
+			Good:     &domain.Good{Name: "Kecap Asin"},
 			StockQty: 3.0,
 			Unit:     "botol",
 		},
 	}
 
-	response := formatStock(items, "kecap")
+	response := formatStock(items, "kecap", nil)
 	t.Logf("Stock response:\n%s", response)
 
 	if response == "" {
 		t.Error("formatStock returned empty string")
+	}
+}
+
+func TestFormatStockWithLastPurchase(t *testing.T) {
+	items := []domain.Inventory{
+		{Good: &domain.Good{Name: "susu bmt 800g"}, StockQty: 1, Unit: "pcs"},
+	}
+	last := &domain.Transaction{
+		ItemName:        "susu bmt 800g",
+		Amount:          89000,
+		TransactionDate: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
+	}
+
+	response := formatStock(items, "susu bmt 800g", map[string]*domain.Transaction{"susu bmt 800g": last})
+
+	if !strings.Contains(response, "susu bmt 800g: 1 pcs (beli terakhir: Rp89.000, 02/09)") {
+		t.Errorf("harga beli terakhir tidak muncul: %s", response)
+	}
+
+	response = formatStock(items, "susu bmt 800g", nil)
+	if strings.Contains(response, "beli terakhir") {
+		t.Errorf("tanpa lastPurchases tidak boleh ada info harga: %s", response)
 	}
 }

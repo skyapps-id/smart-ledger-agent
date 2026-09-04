@@ -1,9 +1,10 @@
 // Package service tests untuk flow lengkap beli → pakai → habis.
-package service
+package consumption
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"log/slog"
 
 	"smart-ledger-agent/internal/domain"
 	"smart-ledger-agent/internal/repository"
@@ -27,10 +27,23 @@ func setupCompleteFlowTestDB(t *testing.T) *gorm.DB {
 		&domain.Transaction{},
 		&domain.Inventory{},
 		&domain.StockLog{},
+		&domain.Good{},
 	)
 	require.NoError(t, err)
 
 	return db
+}
+
+// seedGoodsInventory membuat master goods + entri inventory chat, lalu
+// mengembalikan inventory dengan relasi Good terisi (meniru preload repo).
+func seedGoodsInventory(t *testing.T, db *gorm.DB, chatID, name string, qty float64, unit string) *domain.Inventory {
+	t.Helper()
+	goods := &domain.Good{Code: "T-" + name, Name: name}
+	require.NoError(t, db.Create(goods).Error)
+	inv := &domain.Inventory{ChatID: chatID, GoodsID: goods.ID, StockQty: qty, Unit: unit}
+	require.NoError(t, db.Create(inv).Error)
+	inv.Good = goods
+	return inv
 }
 
 func TestCompleteConsumptionFlow(t *testing.T) {
@@ -39,11 +52,12 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 	// Setup repositories
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	txnRepo := repository.NewTransactionRepository(db)
+	goodsRepo := repository.NewGoodsRepository(db)
 	invRepo := repository.NewInventoryRepository(db)
 	logRepo := repository.NewStockLogRepository(db)
 
 	logger := slog.Default()
-	consumptionService := NewConsumptionService(db, cycleRepo, logger)
+	consumptionService := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-flow"
@@ -62,13 +76,18 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 		t.Run("Step 1 - Pembelian susu 5 kaleng", func(t *testing.T) {
 			purchaseDate := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
+			// Resolve nama barang ke master goods (auto-create)
+			goods, err := goodsRepo.GetOrCreateByName(ctx, "Susu 400gr", "kaleng")
+			require.NoError(t, err)
+
 			// Catat sebagai expense (RFC §5.1)
 			txn := &domain.Transaction{
 				ChatID:          chatID,
 				SenderPhone:     userPhone,
 				Type:            domain.TransactionExpense,
 				Category:        "Belanja",
-				ItemName:        "Susu 400gr",
+				GoodsID:         goods.ID,
+				ItemName:        goods.Name,
 				Amount:          75000, // Rp 75.000
 				RawPayload:      "beli susu 400gr 5 kaleng",
 				TransactionDate: purchaseDate,
@@ -76,13 +95,14 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			require.NoError(t, txnRepo.Create(ctx, txn))
 
 			// Tambah ke inventory via AddStock
-			_, err := invRepo.AddStock(ctx, chatID, "Susu 400gr", 5, "kaleng")
+			_, err = invRepo.AddStock(ctx, chatID, goods.ID, 5, "kaleng")
 			require.NoError(t, err)
 
 			// Verifikasi
-			stok, err := invRepo.GetByChatItem(ctx, chatID, "Susu 400gr")
+			stok, err := invRepo.GetByChatGoods(ctx, chatID, goods.ID)
 			require.NoError(t, err)
 			assert.Equal(t, 5.0, stok.StockQty)
+			assert.Equal(t, "Susu 400gr", stok.Name())
 		})
 
 		// STEP 2: PAKAI (stock berkurang + consumption cycle OPEN)
@@ -90,15 +110,17 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			// Simulasi 2 hari setelah beli
 			time.Sleep(10 * time.Millisecond) // Small delay untuk StartDate yang berbeda
 
+			goods, err := goodsRepo.GetByName(ctx, "Susu 400gr")
+			require.NoError(t, err)
+
 			// Start consumption cycle
-			cycle, err := consumptionService.StartUsage(ctx, chatID, "Susu 400gr", 1, "kaleng", 400.0, "")
+			cycle, err := consumptionService.StartUsage(ctx, chatID, goods, 1, "kaleng", 400.0, "")
 			require.NoError(t, err)
 			assert.Equal(t, domain.ConsumptionCycleActive, cycle.Status)
-			assert.Equal(t, "Susu 400gr", cycle.ItemName)
-			_ = cycle // suppress unused warning
+			assert.Equal(t, goods.ID, cycle.GoodsID)
 
 			// Kurangi stok (simulasi user mengambil 1 kaleng)
-			inv, err := invRepo.GetByChatItem(ctx, chatID, "Susu 400gr")
+			inv, err := invRepo.GetByChatGoods(ctx, chatID, goods.ID)
 			require.NoError(t, err)
 			require.NoError(t, invRepo.DecreaseStock(ctx, inv.ID, 1))
 
@@ -112,10 +134,9 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			require.NoError(t, logRepo.Create(ctx, stockLog))
 
 			// Verifikasi stok berkurang
-			updatedInv, err := invRepo.GetByChatItem(ctx, chatID, "Susu 400gr")
+			updatedInv, err := invRepo.GetByChatGoods(ctx, chatID, goods.ID)
 			require.NoError(t, err)
 			assert.Equal(t, 4.0, updatedInv.StockQty) // 5 - 1 = 4
-			_ = updatedInv                            // suppress unused warning
 		})
 
 		// STEP 3: HABIS (consumption cycle COMPLETED + laporan)
@@ -123,20 +144,22 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			// Simulasi 12 hari kemudian
 			time.Sleep(10 * time.Millisecond)
 
+			goods, err := goodsRepo.GetByName(ctx, "Susu 400gr")
+			require.NoError(t, err)
+
 			// Complete consumption cycle
-			report, err := consumptionService.CompleteUsage(ctx, chatID, "Susu 400gr", "")
+			report, err := consumptionService.CompleteUsage(ctx, chatID, goods, "")
 			require.NoError(t, err)
 
 			// Verifikasi report format
 			assert.Contains(t, report, "Susu 400gr")
 			assert.Contains(t, report, "sudah habis!")
 			assert.Contains(t, report, "⏰ Durasi:")
-			assert.Contains(t, report, "📊 Total:")
+			assert.Contains(t, report, "📊 Total: 400 gr")
 			assert.Contains(t, report, "📈 Rate:")
-			assert.Contains(t, report, "gr/hari")
 
 			// Verifikasi cycle status - tidak boleh ada active cycle
-			_, err = cycleRepo.GetActiveByItem(ctx, chatID, "Susu 400gr")
+			_, err = cycleRepo.GetActiveByGoods(ctx, chatID, goods.ID)
 			assert.Error(t, err) // Should not find active cycle
 			assert.True(t, errors.Is(err, gorm.ErrRecordNotFound))
 
@@ -148,6 +171,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			completedCycle := cycles[0]
 			assert.Equal(t, domain.ConsumptionCycleCompleted, completedCycle.Status)
 			assert.NotNil(t, completedCycle.EndDate)
+			assert.Equal(t, "Susu 400gr", completedCycle.Name())
 		})
 	})
 
@@ -167,12 +191,16 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 
 		// STEP 1: Beli semua items
 		for _, item := range items {
+			goods, err := goodsRepo.GetOrCreateByName(ctx, item.name, item.unit)
+			require.NoError(t, err)
+
 			txn := &domain.Transaction{
 				ChatID:          chatID,
 				SenderPhone:     userPhone,
 				Type:            domain.TransactionExpense,
 				Category:        "Belanja",
-				ItemName:        item.name,
+				GoodsID:         goods.ID,
+				ItemName:        goods.Name,
 				Amount:          item.price,
 				RawPayload:      "beli " + item.name,
 				TransactionDate: time.Now(),
@@ -180,26 +208,32 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			require.NoError(t, txnRepo.Create(ctx, txn))
 
 			// Tambah ke inventory via AddStock
-			_, err := invRepo.AddStock(ctx, chatID, item.name, item.qty, item.unit)
+			_, err = invRepo.AddStock(ctx, chatID, goods.ID, item.qty, item.unit)
 			require.NoError(t, err)
 		}
 
 		// STEP 2: Pakai items
 		for _, item := range items {
-			_, err := consumptionService.StartUsage(ctx, chatID, item.name, item.qty, item.unit, item.conv, "")
+			goods, err := goodsRepo.GetByName(ctx, item.name)
 			require.NoError(t, err)
 
-			inv, err := invRepo.GetByChatItem(ctx, chatID, item.name)
+			_, err = consumptionService.StartUsage(ctx, chatID, goods, item.qty, item.unit, item.conv, "")
+			require.NoError(t, err)
+
+			inv, err := invRepo.GetByChatGoods(ctx, chatID, goods.ID)
 			require.NoError(t, err)
 			require.NoError(t, invRepo.DecreaseStock(ctx, inv.ID, item.qty))
 		}
 
 		// STEP 3: Complete semua
 		for _, item := range items {
-			report, err := consumptionService.CompleteUsage(ctx, chatID, item.name, "")
+			goods, err := goodsRepo.GetByName(ctx, item.name)
+			require.NoError(t, err)
+
+			report, err := consumptionService.CompleteUsage(ctx, chatID, goods, "")
 			require.NoError(t, err)
 			assert.Contains(t, report, "sudah habis!")
-			assert.Contains(t, report, "gr/hari")
+			assert.Contains(t, report, "/hari")
 		}
 
 		// Verify semua cycles completed
@@ -213,13 +247,14 @@ func TestStartUsageErrors(t *testing.T) {
 	db := setupCompleteFlowTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewConsumptionService(db, cycleRepo, logger)
+	service := NewService(db, cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-errors"
 
 	t.Run("CompleteUsage tanpa active cycle", func(t *testing.T) {
-		_, err := service.CompleteUsage(ctx, chatID, "NonExistent Item", "")
+		ghost := &domain.Good{ID: 999, Name: "NonExistent Item"}
+		_, err := service.CompleteUsage(ctx, chatID, ghost, "")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "tidak ada siklus aktif")
 	})

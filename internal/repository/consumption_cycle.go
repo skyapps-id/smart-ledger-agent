@@ -6,20 +6,23 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"smart-ledger-agent/internal/domain"
 )
 
 // ConsumptionCycleRepository abstraksi akses data consumption cycles.
+// Relasi ke barang via goods_id; semua read meng-preload relasi goods.
 type ConsumptionCycleRepository interface {
 	WithTx(tx *gorm.DB) ConsumptionCycleRepository
 	Create(ctx context.Context, cycle *domain.ConsumptionCycle) error
 	GetByID(ctx context.Context, id int64) (*domain.ConsumptionCycle, error)
-	GetActiveByItem(ctx context.Context, chatID, itemName string) (*domain.ConsumptionCycle, error)
-	GetActiveByItemAndBatch(ctx context.Context, chatID, itemName, batchNumber string) (*domain.ConsumptionCycle, error)
+	GetActiveByGoods(ctx context.Context, chatID string, goodsID int64) (*domain.ConsumptionCycle, error)
+	ListActiveByGoods(ctx context.Context, chatID string, goodsID int64) ([]domain.ConsumptionCycle, error)
+	GetActiveByGoodsAndBatch(ctx context.Context, chatID string, goodsID int64, batchNumber string) (*domain.ConsumptionCycle, error)
 	Update(ctx context.Context, cycle *domain.ConsumptionCycle) error
 	ListByChat(ctx context.Context, chatID string, limit int) ([]domain.ConsumptionCycle, error)
-	ListByDateRange(ctx context.Context, chatID, itemName string, from, to time.Time) ([]domain.ConsumptionCycle, error)
+	ListByDateRange(ctx context.Context, chatID string, goodsID int64, from, to time.Time) ([]domain.ConsumptionCycle, error)
 	CompleteCycle(ctx context.Context, id int64, endDate time.Time) error
 }
 
@@ -34,12 +37,15 @@ func (r *consumptionCycleRepo) WithTx(tx *gorm.DB) ConsumptionCycleRepository {
 }
 
 func (r *consumptionCycleRepo) Create(ctx context.Context, cycle *domain.ConsumptionCycle) error {
-	return r.db.WithContext(ctx).Create(cycle).Error
+	// Omit associations: relasi Good hanya bacaan (preload), bukan ditulis
+	// dari cycle — master goods dikelola GoodsRepository.
+	return r.db.WithContext(ctx).Omit(clause.Associations).Create(cycle).Error
 }
 
 func (r *consumptionCycleRepo) GetByID(ctx context.Context, id int64) (*domain.ConsumptionCycle, error) {
 	var cycle domain.ConsumptionCycle
 	err := r.db.WithContext(ctx).
+		Preload("Good").
 		Where("id = ?", id).
 		First(&cycle).Error
 	if err != nil {
@@ -48,10 +54,11 @@ func (r *consumptionCycleRepo) GetByID(ctx context.Context, id int64) (*domain.C
 	return &cycle, nil
 }
 
-func (r *consumptionCycleRepo) GetActiveByItem(ctx context.Context, chatID, itemName string) (*domain.ConsumptionCycle, error) {
+func (r *consumptionCycleRepo) GetActiveByGoods(ctx context.Context, chatID string, goodsID int64) (*domain.ConsumptionCycle, error) {
 	var cycle domain.ConsumptionCycle
 	err := r.db.WithContext(ctx).
-		Where("chat_id = ? AND item_name = ? AND status = ?", chatID, itemName, domain.ConsumptionCycleActive).
+		Preload("Good").
+		Where("chat_id = ? AND goods_id = ? AND status = ?", chatID, goodsID, domain.ConsumptionCycleActive).
 		Order("start_date DESC").
 		First(&cycle).Error
 	if err != nil {
@@ -60,10 +67,23 @@ func (r *consumptionCycleRepo) GetActiveByItem(ctx context.Context, chatID, item
 	return &cycle, nil
 }
 
-func (r *consumptionCycleRepo) GetActiveByItemAndBatch(ctx context.Context, chatID, itemName, batchNumber string) (*domain.ConsumptionCycle, error) {
+// ListActiveByGoods mengembalikan SEMUA cycle aktif untuk satu barang —
+// dipakai agent untuk meminta konfirmasi batch bila ada lebih dari satu.
+func (r *consumptionCycleRepo) ListActiveByGoods(ctx context.Context, chatID string, goodsID int64) ([]domain.ConsumptionCycle, error) {
+	var cycles []domain.ConsumptionCycle
+	err := r.db.WithContext(ctx).
+		Preload("Good").
+		Where("chat_id = ? AND goods_id = ? AND status = ?", chatID, goodsID, domain.ConsumptionCycleActive).
+		Order("start_date DESC").
+		Find(&cycles).Error
+	return cycles, err
+}
+
+func (r *consumptionCycleRepo) GetActiveByGoodsAndBatch(ctx context.Context, chatID string, goodsID int64, batchNumber string) (*domain.ConsumptionCycle, error) {
 	var cycle domain.ConsumptionCycle
 	err := r.db.WithContext(ctx).
-		Where("chat_id = ? AND item_name = ? AND batch_number = ? AND status = ?", chatID, itemName, batchNumber, domain.ConsumptionCycleActive).
+		Preload("Good").
+		Where("chat_id = ? AND goods_id = ? AND batch_number = ? AND status = ?", chatID, goodsID, batchNumber, domain.ConsumptionCycleActive).
 		Order("start_date DESC").
 		First(&cycle).Error
 	if err != nil {
@@ -73,12 +93,13 @@ func (r *consumptionCycleRepo) GetActiveByItemAndBatch(ctx context.Context, chat
 }
 
 func (r *consumptionCycleRepo) Update(ctx context.Context, cycle *domain.ConsumptionCycle) error {
-	return r.db.WithContext(ctx).Save(cycle).Error
+	return r.db.WithContext(ctx).Omit(clause.Associations).Save(cycle).Error
 }
 
 func (r *consumptionCycleRepo) ListByChat(ctx context.Context, chatID string, limit int) ([]domain.ConsumptionCycle, error) {
 	var cycles []domain.ConsumptionCycle
 	query := r.db.WithContext(ctx).
+		Preload("Good").
 		Where("chat_id = ?", chatID).
 		Order("start_date DESC")
 
@@ -90,14 +111,15 @@ func (r *consumptionCycleRepo) ListByChat(ctx context.Context, chatID string, li
 	return cycles, err
 }
 
-func (r *consumptionCycleRepo) ListByDateRange(ctx context.Context, chatID, itemName string, from, to time.Time) ([]domain.ConsumptionCycle, error) {
+func (r *consumptionCycleRepo) ListByDateRange(ctx context.Context, chatID string, goodsID int64, from, to time.Time) ([]domain.ConsumptionCycle, error) {
 	var cycles []domain.ConsumptionCycle
 	query := r.db.WithContext(ctx).
+		Preload("Good").
 		Where("chat_id = ?", chatID).
 		Order("start_date DESC")
 
-	if itemName != "" {
-		query = query.Where("item_name = ?", itemName)
+	if goodsID > 0 {
+		query = query.Where("goods_id = ?", goodsID)
 	}
 
 	if !from.IsZero() {

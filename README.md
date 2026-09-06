@@ -142,14 +142,15 @@ flowchart TD
     I1 --> J[🤖 LLM #2: Transaction Extraction<br/>+ relevant inventory 1-5 items]
 
     subgraph DB[Database]
+        DB0[(goods)]
         DB1[(transactions)]
         DB2[(inventory)]
         DB3[(stock_logs)]
         DB4[(consumption_cycles)]
     end
 
-    J -- INCOME --> DB1
-    J -- EXPENSE --> DB1 & DB2 & DB3
+    J -- INCOME --> DB0 & DB1
+    J -- EXPENSE --> DB0 & DB1 & DB2 & DB3
     J -- CONSUMPTION --> DB2 & DB3 & DB4
 
     H -- consumption --> I2[Consumption cycle ops<br/>use / update / complete / list]
@@ -335,10 +336,14 @@ orch := orchestrator.New(agents, chatRepo, intentExtractor, replySender, logger)
 
 ```mermaid
 erDiagram
+    chats ||--o{ goods : owns
     chats ||--o{ transactions : owns
     chats ||--o{ inventory : owns
-    inventory ||--o{ stock_logs : logs
     chats ||--o{ consumption_cycles : owns
+    goods ||--o{ transactions : "item of"
+    goods ||--o{ inventory : "stocked as"
+    goods ||--o{ consumption_cycles : "consumed as"
+    inventory ||--o{ stock_logs : logs
 
     chats {
         bigint id PK
@@ -348,21 +353,33 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
+    goods {
+        bigint id PK
+        varchar(64) chat_id FK "per-chat ledger isolation"
+        varchar(32) code UK "with chat_id, slug auto-generated"
+        varchar(128) name "single source of item names"
+        varchar(32) uom "canonical unit (galon, pcs...)"
+        varchar(32) conversion_uom "1 uom = factor_uom conversion_uom"
+        numeric(12,3) factor_uom "learned/curated conversion"
+        timestamptz created_at
+        timestamptz updated_at
+    }
     transactions {
         bigint id PK
         varchar(64) chat_id FK
+        bigint goods_id FK "relation via id"
         varchar(32) sender_phone "audit sender"
         varchar(16) type "INCOME / EXPENSE"
         varchar(32) category
-        varchar(128) item_name
+        varchar(128) item_name "denormalized display snapshot"
         numeric amount
         text raw_payload
         timestamptz created_at
     }
     inventory {
         bigint id PK
-        varchar(64) chat_id FK
-        varchar(128) item_name UK
+        varchar(64) chat_id FK "UK with goods_id"
+        bigint goods_id FK "UK with chat_id"
         numeric stock_qty
         varchar(32) unit
         timestamptz updated_at
@@ -378,7 +395,7 @@ erDiagram
     consumption_cycles {
         bigint id PK
         varchar(64) chat_id FK
-        varchar(128) item_name
+        bigint goods_id FK "relation via id"
         varchar(64) batch_number "auto-generated"
         date start_date
         date end_date "nullable"
@@ -393,6 +410,15 @@ erDiagram
         timestamptz updated_at
     }
 ```
+
+### Goods Master (single source of truth for items)
+
+`goods` is a **per-chat catalog** — each chat (session/ledger) owns its own goods rows, so item names and learned conversion factors are isolated between chats, consistent with ledger isolation:
+
+- **Relation by id, not name.** `inventory`, `consumption_cycles`, and `transactions` reference `goods_id`; `transactions.item_name` is kept only as a denormalized display snapshot for reports.
+- **Auto-create.** New item names from LLM extraction are resolved via `GoodsRepository.GetOrCreateByName` scoped to the chat (case-insensitive match, code generated from the name slug, unique per `chat_id + code`).
+- **UOM conversion factors.** `uom` = canonical unit, `conversion_uom` + `factor_uom` = conversion learned from the chat's users (e.g. "1 galon = 15 lt" from a "15lt" answer). Learned factors are stored on the chat's goods row, so subsequent usage in the same chat converts stably — prompts never invent conversion factors.
+- **Name resolution.** LLM-facing contracts still use `item_name` strings; the resolver maps name → `goods` (same chat) → chat inventory (exact → ILIKE join → original-message filter).
 
 Tables are created automatically via GORM `AutoMigrate` on application start. Adding a new struct field → new column is added automatically (existing columns are not dropped).
 
@@ -534,7 +560,7 @@ smart-ledger-agent/
 ├── internal/
 │   ├── config/                 # env loader
 │   ├── database/               # GORM setup + auto-migrate
-│   ├── domain/                 # GORM models + constants (Chat, Transaction, Inventory, StockLog)
+│   ├── domain/                 # GORM models + constants (Chat, Good, Transaction, Inventory, StockLog, ConsumptionCycle)
 │   ├── entity/                 # cross-layer business entities (IncomingMessage)
 │   ├── handler/
 │   │   ├── model/              # webhook parsing DTOs (WahaPayload)
@@ -545,6 +571,7 @@ smart-ledger-agent/
 │   ├── repository/
 │   │   ├── model/              # query-result DTOs (TxnSummary, ItemBreakdown, StockMovement)
 │   │   ├── chat.go
+│   │   ├── goods.go             # goods master repository (GetOrCreateByName, UpdateConversion)
 │   │   ├── consumption_cycle.go  # consumption cycle repository
 │   │   ├── transaction.go
 │   │   ├── inventory.go

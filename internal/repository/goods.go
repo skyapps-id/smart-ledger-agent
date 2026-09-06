@@ -14,17 +14,19 @@ import (
 	"smart-ledger-agent/internal/domain"
 )
 
-// GoodsRepository abstraksi penyimpanan master katalog barang global.
-// Sumber kebenaran satuan (uom + faktor konversi) bersama lintas chat.
+// GoodsRepository abstraksi penyimpanan master katalog barang PER CHAT
+// (ledger). Sumber kebenaran nama barang & satuan (uom + faktor konversi),
+// terisolasi antar chat.
 type GoodsRepository interface {
 	WithTx(tx *gorm.DB) GoodsRepository
 	GetByCode(ctx context.Context, code string) (*domain.Good, error)
-	GetByName(ctx context.Context, name string) (*domain.Good, error)
+	GetByName(ctx context.Context, chatID, name string) (*domain.Good, error)
 	// GetOrCreateByName meresolve nama barang (hasil ekstraksi LLM) ke row
-	// goods; bila belum ada, dibuat otomatis dengan code hasil slug nama.
-	GetOrCreateByName(ctx context.Context, name, uom string) (*domain.Good, error)
-	SearchByName(ctx context.Context, keyword string, limit int) ([]domain.Good, error)
-	List(ctx context.Context) ([]domain.Good, error)
+	// goods pada chat; bila belum ada, dibuat otomatis dengan code hasil
+	// slug nama.
+	GetOrCreateByName(ctx context.Context, chatID, name, uom string) (*domain.Good, error)
+	SearchByName(ctx context.Context, chatID, keyword string, limit int) ([]domain.Good, error)
+	ListByChat(ctx context.Context, chatID string) ([]domain.Good, error)
 	Upsert(ctx context.Context, g *domain.Good) error
 	// UpdateConversion menyimpan faktor konversi yang DIPELAJARI dari user
 	// (1 uom = factorUom conversionUom, mis. 1 galon = 15 lt) ke master goods.
@@ -53,9 +55,11 @@ func (r *goodsRepo) GetByCode(ctx context.Context, code string) (*domain.Good, e
 	return &g, nil
 }
 
-func (r *goodsRepo) GetByName(ctx context.Context, name string) (*domain.Good, error) {
+func (r *goodsRepo) GetByName(ctx context.Context, chatID, name string) (*domain.Good, error) {
 	var g domain.Good
-	err := r.db.WithContext(ctx).Where("LOWER(name) = LOWER(?)", name).First(&g).Error
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ? AND LOWER(name) = LOWER(?)", chatID, name).
+		First(&g).Error
 	if err != nil {
 		return nil, err
 	}
@@ -77,11 +81,12 @@ func slugCode(name string) string {
 	return strings.ToUpper(s)
 }
 
-// GetOrCreateByName meresolve nama barang (case-insensitive) ke row goods.
-// Bila belum terdaftar, dibuat baru dengan code dari slug nama; bentrok
-// code dicegah dengan suffix -2/-3 lalu fallback G-<unixnano>.
-func (r *goodsRepo) GetOrCreateByName(ctx context.Context, name, uom string) (*domain.Good, error) {
-	if g, err := r.GetByName(ctx, name); err == nil {
+// GetOrCreateByName meresolve nama barang (case-insensitive) ke row goods
+// pada chat tersebut. Bila belum terdaftar, dibuat baru dengan code dari
+// slug nama; bentrok code dicegah dengan suffix -2/-3 lalu fallback
+// G-<unixnano>.
+func (r *goodsRepo) GetOrCreateByName(ctx context.Context, chatID, name, uom string) (*domain.Good, error) {
+	if g, err := r.GetByName(ctx, chatID, name); err == nil {
 		return g, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -93,9 +98,9 @@ func (r *goodsRepo) GetOrCreateByName(ctx context.Context, name, uom string) (*d
 		if attempt > 0 {
 			tryCode = fmt.Sprintf("%s-%d", code, attempt+1)
 		}
-		g := &domain.Good{Code: tryCode, Name: strings.TrimSpace(name), Uom: uom}
+		g := &domain.Good{ChatID: chatID, Code: tryCode, Name: strings.TrimSpace(name), Uom: uom}
 		err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "code"}},
+			Columns:   []clause.Column{{Name: "chat_id"}, {Name: "code"}},
 			DoNothing: true,
 		}).Create(g).Error
 		if err != nil {
@@ -109,12 +114,13 @@ func (r *goodsRepo) GetOrCreateByName(ctx context.Context, name, uom string) (*d
 
 	// Fallback terakhir: code unik dari timestamp.
 	g := &domain.Good{
-		Code: fmt.Sprintf("G-%d", time.Now().UnixNano()),
-		Name: strings.TrimSpace(name), Uom: uom,
+		ChatID: chatID,
+		Code:   fmt.Sprintf("G-%d", time.Now().UnixNano()),
+		Name:   strings.TrimSpace(name), Uom: uom,
 	}
 	if err := r.db.WithContext(ctx).Create(g).Error; err != nil {
 		// Race: nama mungkin baru dibuat proses lain — ambil yang ada.
-		if existing, gerr := r.GetByName(ctx, name); gerr == nil {
+		if existing, gerr := r.GetByName(ctx, chatID, name); gerr == nil {
 			return existing, nil
 		}
 		return nil, err
@@ -122,32 +128,35 @@ func (r *goodsRepo) GetOrCreateByName(ctx context.Context, name, uom string) (*d
 	return g, nil
 }
 
-// SearchByName mencari goods berdasarkan keyword menggunakan ILIKE.
-// limit <= 0 dipatok defaultGoodsSearchLimit.
-func (r *goodsRepo) SearchByName(ctx context.Context, keyword string, limit int) ([]domain.Good, error) {
+// SearchByName mencari goods pada chat berdasarkan keyword menggunakan
+// ILIKE. limit <= 0 dipatok defaultGoodsSearchLimit.
+func (r *goodsRepo) SearchByName(ctx context.Context, chatID, keyword string, limit int) ([]domain.Good, error) {
 	if limit <= 0 {
 		limit = defaultGoodsSearchLimit
 	}
 	var goods []domain.Good
 	err := r.db.WithContext(ctx).
-		Where("name ILIKE ?", "%"+keyword+"%").
+		Where("chat_id = ? AND name ILIKE ?", chatID, "%"+keyword+"%").
 		Order("name ASC").
 		Limit(limit).
 		Find(&goods).Error
 	return goods, err
 }
 
-func (r *goodsRepo) List(ctx context.Context) ([]domain.Good, error) {
+func (r *goodsRepo) ListByChat(ctx context.Context, chatID string) ([]domain.Good, error) {
 	var goods []domain.Good
-	err := r.db.WithContext(ctx).Order("name ASC").Find(&goods).Error
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ?", chatID).
+		Order("name ASC").
+		Find(&goods).Error
 	return goods, err
 }
 
-// Upsert menyimpan goods berdasarkan code: insert bila belum ada,
-// update atribut bila sudah (idempoten untuk pengisian katalog).
+// Upsert menyimpan goods berdasarkan (chat_id, code): insert bila belum
+// ada, update atribut bila sudah (idempoten untuk pengisian katalog).
 func (r *goodsRepo) Upsert(ctx context.Context, g *domain.Good) error {
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "code"}},
+		Columns: []clause.Column{{Name: "chat_id"}, {Name: "code"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"name":           g.Name,
 			"uom":            g.Uom,

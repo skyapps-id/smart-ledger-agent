@@ -150,7 +150,7 @@ func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.Incoming
 
 	// Resolve nama barang ke master goods (auto-create bila baru) —
 	// relasi transaksi via goods_id, nama disimpan sebagai snapshot display.
-	goods, err := a.goodsRepo.WithTx(a.db).GetOrCreateByName(ctx, ext.ItemName, ext.Unit)
+	goods, err := a.goodsRepo.WithTx(a.db).GetOrCreateByName(ctx, msg.ChatID, ext.ItemName, ext.Unit)
 	if err != nil {
 		return "", fmt.Errorf("resolve goods: %w", err)
 	}
@@ -183,7 +183,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Resolve nama barang ke master goods (auto-create bila baru):
 		// seluruh relasi berikutnya (transaksi, inventory) via goods_id.
-		goods, err := a.goodsRepo.WithTx(tx).GetOrCreateByName(ctx, ext.ItemName, ext.Unit)
+		goods, err := a.goodsRepo.WithTx(tx).GetOrCreateByName(ctx, msg.ChatID, ext.ItemName, ext.Unit)
 		if err != nil {
 			return fmt.Errorf("resolve goods: %w", err)
 		}
@@ -437,7 +437,7 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 	if ok {
 		ext.Quantity, ext.Unit = convQty, convUnit
 		if learnedQty > 0 {
-			// Promosikan faktor yang baru diketahui ke master goods.
+			// Promosikan faktor yang baru diketahui ke master goods chat ini.
 			if err := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, learnedUnit, learnedQty); err != nil {
 				a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
 			}

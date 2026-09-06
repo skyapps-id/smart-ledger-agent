@@ -95,15 +95,17 @@ type StockLog struct {
 
 func (StockLog) TableName() string { return "stock_logs" }
 
-// Good adalah master katalog barang GLOBAL (bersama lintas chat/ledger).
+// Good adalah master katalog barang PER CHAT (ledger) — nama barang &
+// faktor satuan terisolasi antar chat, konsisten dengan isolasi ledger.
 // Uom = satuan kanonik barang (mis. "galon"); ConversionUom + FactorUom =
 // faktor konversi resmi (1 Uom = FactorUom ConversionUom, mis. 19 lt).
 // Master ini sumber kebenaran satuan: prompt LLM dilarang mengarang UOM /
 // faktor konversi dan wajib merujuk ke sini.
 type Good struct {
 	ID            int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Code          string    `gorm:"size:32;uniqueIndex" json:"code"`
-	Name          string    `gorm:"size:128;index" json:"name"`
+	ChatID        string    `gorm:"size:64;uniqueIndex:idx_goods_chat_code;index:idx_goods_chat_name" json:"chat_id"`
+	Code          string    `gorm:"size:32;uniqueIndex:idx_goods_chat_code" json:"code"`
+	Name          string    `gorm:"size:128;index:idx_goods_chat_name" json:"name"`
 	Uom           string    `gorm:"size:32" json:"uom"`
 	ConversionUom string    `gorm:"size:32" json:"conversion_uom"`
 	FactorUom     float64   `gorm:"type:numeric(12,3)" json:"factor_uom"`

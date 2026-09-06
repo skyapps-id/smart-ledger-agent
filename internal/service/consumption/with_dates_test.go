@@ -34,9 +34,9 @@ func TestConsumptionWithDateRange(t *testing.T) {
 
 	ctx := context.Background()
 	chatID := "test-chat-123"
-	susu := mustGood(t, db, "Susu")
-	mie := mustGood(t, db, "Mie Instan")
-	kopi := mustGood(t, db, "Kopi")
+	susu := mustGood(t, db, chatID, "Susu")
+	mie := mustGood(t, db, chatID, "Mie Instan")
+	kopi := mustGood(t, db, chatID, "Kopi")
 
 	t.Run("Start cycle dengan tanggal pembelian spesifik", func(t *testing.T) {
 		purchaseDate, _ := time.Parse("2006-01-02", "2026-08-01")
@@ -113,7 +113,7 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 
 	ctx := context.Background()
 	chatID := "test-chat-history"
-	teh := mustGood(t, db, "Teh")
+	teh := mustGood(t, db, chatID, "Teh")
 
 	// Buat beberapa cycle yang sudah selesai
 	date1, _ := time.Parse("2006-01-02", "2026-07-01")

@@ -27,9 +27,9 @@ func setupBatchTestDB(t *testing.T) *gorm.DB {
 }
 
 // mustGood membuat master goods untuk pengujian (relasi via goods_id).
-func mustGood(t *testing.T, db *gorm.DB, name string) *domain.Good {
+func mustGood(t *testing.T, db *gorm.DB, chatID, name string) *domain.Good {
 	t.Helper()
-	g := &domain.Good{Code: "T-" + name, Name: name}
+	g := &domain.Good{ChatID: chatID, Code: "T-" + name, Name: name}
 	require.NoError(t, db.Create(g).Error)
 	return g
 }
@@ -42,11 +42,11 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 
 	ctx := context.Background()
 	chatID := "test-chat-batch"
-	susu := mustGood(t, db, "Susu 400gr")
-	kopi := mustGood(t, db, "Kopi 1kg")
-	teh := mustGood(t, db, "Teh 250gr")
-	gula := mustGood(t, db, "Gula 1kg")
-	minyak := mustGood(t, db, "Minyak 1L")
+	susu := mustGood(t, db, chatID, "Susu 400gr")
+	kopi := mustGood(t, db, chatID, "Kopi 1kg")
+	teh := mustGood(t, db, chatID, "Teh 250gr")
+	gula := mustGood(t, db, chatID, "Gula 1kg")
+	minyak := mustGood(t, db, chatID, "Minyak 1L")
 
 	t.Run("Buka 2 cycle dengan batch berbeda untuk item yang sama", func(t *testing.T) {
 		// STEP 1: Buka cycle pertama (auto-generated batch)
@@ -205,7 +205,7 @@ func TestStartUsageSemantics(t *testing.T) {
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	svc := NewService(db, cycleRepo, slog.Default())
 
-	bmt := mustGood(t, db, "susu bmt 200g")
+	bmt := mustGood(t, db, "chat-uom", "susu bmt 200g")
 	cycle, err := svc.StartUsage(context.Background(), "chat-uom", bmt, 1, "pcs", 1.0, "2026-03-01")
 	require.NoError(t, err)
 
@@ -225,7 +225,7 @@ func TestListActiveByItemMultiBatch(t *testing.T) {
 	ctx := context.Background()
 
 	// Dua "pakai" berturut = dua batch aktif.
-	bmt := mustGood(t, db, "susu bmt 200g")
+	bmt := mustGood(t, db, "chat-multi", "susu bmt 200g")
 	_, err := svc.StartUsage(ctx, "chat-multi", bmt, 1, "pcs", 1.0, "2026-09-01")
 	require.NoError(t, err)
 	_, err = svc.StartUsage(ctx, "chat-multi", bmt, 1, "pcs", 1.0, "2026-09-02")

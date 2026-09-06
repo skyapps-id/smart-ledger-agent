@@ -39,7 +39,7 @@ func (e *AmbiguousInventoryError) Error() string {
 // jumlah pakai), padahal di inventory barangnya tercatat "susu bmt 200g".
 func ResolveInventoryItem(ctx context.Context, db *gorm.DB, goodsRepo repository.GoodsRepository, invRepo repository.InventoryRepository, chatID, userMessage, itemName string) (*domain.Inventory, error) {
 	// Exact: nama → master goods → inventory chat ini.
-	if goods, err := goodsRepo.WithTx(db).GetByName(ctx, itemName); err == nil {
+	if goods, err := goodsRepo.WithTx(db).GetByName(ctx, chatID, itemName); err == nil {
 		if inv, ierr := invRepo.WithTx(db).GetByChatGoods(ctx, chatID, goods.ID); ierr == nil {
 			return inv, nil
 		} else if !errors.Is(ierr, gorm.ErrRecordNotFound) {

@@ -391,7 +391,7 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 		usageQty, usageUnit = convQty, convUnit
 		if learnedQty > 0 {
 			// Promosikan faktor yang baru diketahui ke master goods agar
-			// pemakaian berikutnya (chat manapun) stabil.
+			// pemakaian berikutnya di chat ini stabil.
 			if err := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, learnedUnit, learnedQty); err != nil {
 				a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
 			}

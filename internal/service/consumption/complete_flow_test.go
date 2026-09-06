@@ -38,7 +38,7 @@ func setupCompleteFlowTestDB(t *testing.T) *gorm.DB {
 // mengembalikan inventory dengan relasi Good terisi (meniru preload repo).
 func seedGoodsInventory(t *testing.T, db *gorm.DB, chatID, name string, qty float64, unit string) *domain.Inventory {
 	t.Helper()
-	goods := &domain.Good{Code: "T-" + name, Name: name}
+	goods := &domain.Good{ChatID: chatID, Code: "T-" + name, Name: name}
 	require.NoError(t, db.Create(goods).Error)
 	inv := &domain.Inventory{ChatID: chatID, GoodsID: goods.ID, StockQty: qty, Unit: unit}
 	require.NoError(t, db.Create(inv).Error)
@@ -77,7 +77,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			purchaseDate := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
 			// Resolve nama barang ke master goods (auto-create)
-			goods, err := goodsRepo.GetOrCreateByName(ctx, "Susu 400gr", "kaleng")
+			goods, err := goodsRepo.GetOrCreateByName(ctx, chatID, "Susu 400gr", "kaleng")
 			require.NoError(t, err)
 
 			// Catat sebagai expense (RFC §5.1)
@@ -110,7 +110,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			// Simulasi 2 hari setelah beli
 			time.Sleep(10 * time.Millisecond) // Small delay untuk StartDate yang berbeda
 
-			goods, err := goodsRepo.GetByName(ctx, "Susu 400gr")
+			goods, err := goodsRepo.GetByName(ctx, chatID, "Susu 400gr")
 			require.NoError(t, err)
 
 			// Start consumption cycle
@@ -144,7 +144,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			// Simulasi 12 hari kemudian
 			time.Sleep(10 * time.Millisecond)
 
-			goods, err := goodsRepo.GetByName(ctx, "Susu 400gr")
+			goods, err := goodsRepo.GetByName(ctx, chatID, "Susu 400gr")
 			require.NoError(t, err)
 
 			// Complete consumption cycle
@@ -191,7 +191,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 
 		// STEP 1: Beli semua items
 		for _, item := range items {
-			goods, err := goodsRepo.GetOrCreateByName(ctx, item.name, item.unit)
+			goods, err := goodsRepo.GetOrCreateByName(ctx, chatID, item.name, item.unit)
 			require.NoError(t, err)
 
 			txn := &domain.Transaction{
@@ -214,7 +214,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 
 		// STEP 2: Pakai items
 		for _, item := range items {
-			goods, err := goodsRepo.GetByName(ctx, item.name)
+			goods, err := goodsRepo.GetByName(ctx, chatID, item.name)
 			require.NoError(t, err)
 
 			_, err = consumptionService.StartUsage(ctx, chatID, goods, item.qty, item.unit, item.conv, "")
@@ -227,7 +227,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 
 		// STEP 3: Complete semua
 		for _, item := range items {
-			goods, err := goodsRepo.GetByName(ctx, item.name)
+			goods, err := goodsRepo.GetByName(ctx, chatID, item.name)
 			require.NoError(t, err)
 
 			report, err := consumptionService.CompleteUsage(ctx, chatID, goods, "")

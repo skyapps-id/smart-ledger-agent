@@ -180,6 +180,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 	var inv *domain.Inventory
 	var lastPurchase *domain.Transaction
 	var txnDate time.Time
+	var category string
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Resolve nama barang ke master goods (auto-create bila baru):
 		// seluruh relasi berikutnya (transaksi, inventory) via goods_id.
@@ -187,6 +188,9 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		if err != nil {
 			return fmt.Errorf("resolve goods: %w", err)
 		}
+		// Kategori kanonik dari master menang; bila master belum punya,
+		// seed dari ekstraksi LLM agar transaksi berikutnya stabil.
+		category = resolveCategory(ctx, a.goodsRepo, tx, goods, ext.Category)
 
 		// Skip financial transaction creation if amount is 0 but affects stock (inventory-only update)
 		if ext.Amount == 0 && ext.AffectsStock {
@@ -227,7 +231,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			ChatID:          msg.ChatID,
 			SenderPhone:     msg.UserPhone,
 			Type:            domain.TransactionExpense,
-			Category:        ext.Category,
+			Category:        category,
 			GoodsID:         goods.ID,
 			ItemName:        goods.Name,
 			Amount:          ext.Amount,
@@ -341,7 +345,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		baseReply := fmt.Sprintf(
 			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
 			ext.ItemName, ext.Quantity, ext.Unit,
-			agent.FormatRupiah(ext.Amount), ext.Category,
+			agent.FormatRupiah(ext.Amount), category,
 			inv.StockQty, inv.Unit,
 		)
 
@@ -358,7 +362,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 
 	baseReply := fmt.Sprintf(
 		"Pengeluaran tercatat: %s sebesar Rp%s (%s).",
-		ext.ItemName, agent.FormatRupiah(ext.Amount), ext.Category,
+		ext.ItemName, agent.FormatRupiah(ext.Amount), category,
 	)
 
 	// Analisa konsumsi untuk non-stock items

@@ -102,11 +102,14 @@ func (StockLog) TableName() string { return "stock_logs" }
 // Master ini sumber kebenaran satuan: prompt LLM dilarang mengarang UOM /
 // faktor konversi dan wajib merujuk ke sini.
 type Good struct {
-	ID            int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	ChatID        string    `gorm:"size:64;uniqueIndex:idx_goods_chat_code;index:idx_goods_chat_name" json:"chat_id"`
-	Code          string    `gorm:"size:32;uniqueIndex:idx_goods_chat_code" json:"code"`
-	Name          string    `gorm:"size:128;index:idx_goods_chat_name" json:"name"`
-	Uom           string    `gorm:"size:32" json:"uom"`
+	ID     int64  `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID string `gorm:"size:64;uniqueIndex:idx_goods_chat_code;index:idx_goods_chat_name" json:"chat_id"`
+	Code   string `gorm:"size:32;uniqueIndex:idx_goods_chat_code" json:"code"`
+	Name   string `gorm:"size:128;index:idx_goods_chat_name" json:"name"`
+	Uom    string `gorm:"size:32" json:"uom"`
+	// Category tetap (kanonik) barang — sekali didefinisikan di master,
+	// transaksi berikutnya TIDAK bisa menggesernya (stabil untuk laporan).
+	Category      string    `gorm:"size:32" json:"category"`
 	ConversionUom string    `gorm:"size:32" json:"conversion_uom"`
 	FactorUom     float64   `gorm:"type:numeric(12,3)" json:"factor_uom"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -172,6 +175,7 @@ const (
 	ActionGetStock          = "get_stock"
 	ActionGetReport         = "get_report"
 	ActionConsumption       = "consumption"
+	ActionGoods             = "goods"
 	ActionInit              = "init"
 	ActionHelp              = "help"
 	ActionInfo              = "info"

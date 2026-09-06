@@ -113,13 +113,14 @@ func (r *inventoryRepo) ListByChat(ctx context.Context, chatID string) ([]domain
 }
 
 // SearchByName mencari inventory items berdasarkan NAMA BARANG di master
-// goods (ILIKE join). Maksimal 5 hasil untuk menghemat tokens di LLM context.
+// goods (case-insensitive join; LOWER LIKE portabel lintas dialek).
+// Maksimal 5 hasil untuk menghemat tokens di LLM context.
 func (r *inventoryRepo) SearchByName(ctx context.Context, chatID, keyword string) ([]domain.Inventory, error) {
 	var items []domain.Inventory
 	err := r.db.WithContext(ctx).
 		Preload("Good").
 		Joins("JOIN goods ON goods.id = inventory.goods_id").
-		Where("inventory.chat_id = ? AND goods.name ILIKE ?", chatID, "%"+keyword+"%").
+		Where("inventory.chat_id = ? AND LOWER(goods.name) LIKE LOWER(?)", chatID, "%"+keyword+"%").
 		Order("goods.name ASC").
 		Limit(5).
 		Find(&items).Error
@@ -146,10 +147,15 @@ func (r *inventoryRepo) GetCategorySummary(ctx context.Context, chatID string) (
 		"LAINNYA":   {},
 	}
 
-	// Categorize items
+	// Categorize items: kategori kanonik di master goods MENANG; heuristic
+	// keyword hanya fallback untuk barang yang belum punya kategori.
 	categorized := make(map[string][]string)
 	for _, item := range items {
 		name := item.Name()
+		if item.Good != nil && item.Good.Category != "" {
+			categorized[item.Good.Category] = append(categorized[item.Good.Category], name)
+			continue
+		}
 		lowerName := strings.ToLower(name)
 		itemCategorized := false
 

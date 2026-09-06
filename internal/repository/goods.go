@@ -31,6 +31,10 @@ type GoodsRepository interface {
 	// UpdateConversion menyimpan faktor konversi yang DIPELAJARI dari user
 	// (1 uom = factorUom conversionUom, mis. 1 galon = 15 lt) ke master goods.
 	UpdateConversion(ctx context.Context, id int64, conversionUom string, factorUom float64) error
+	// UpdateUom mengubah satuan kanonik barang (mis. "galon" → "lt").
+	UpdateUom(ctx context.Context, id int64, uom string) error
+	// UpdateCategory mengubah kategori kanonik barang.
+	UpdateCategory(ctx context.Context, id int64, category string) error
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -128,15 +132,15 @@ func (r *goodsRepo) GetOrCreateByName(ctx context.Context, chatID, name, uom str
 	return g, nil
 }
 
-// SearchByName mencari goods pada chat berdasarkan keyword menggunakan
-// ILIKE. limit <= 0 dipatok defaultGoodsSearchLimit.
+// SearchByName mencari goods pada chat berdasarkan keyword, case-insensitive
+// (LOWER LIKE — portabel lintas dialek). limit <= 0 dipatok defaultGoodsSearchLimit.
 func (r *goodsRepo) SearchByName(ctx context.Context, chatID, keyword string, limit int) ([]domain.Good, error) {
 	if limit <= 0 {
 		limit = defaultGoodsSearchLimit
 	}
 	var goods []domain.Good
 	err := r.db.WithContext(ctx).
-		Where("chat_id = ? AND name ILIKE ?", chatID, "%"+keyword+"%").
+		Where("chat_id = ? AND LOWER(name) LIKE LOWER(?)", chatID, "%"+keyword+"%").
 		Order("name ASC").
 		Limit(limit).
 		Find(&goods).Error
@@ -176,4 +180,18 @@ func (r *goodsRepo) UpdateConversion(ctx context.Context, id int64, conversionUo
 	return r.db.WithContext(ctx).Model(&domain.Good{}).
 		Where("id = ?", id).
 		Updates(map[string]any{"conversion_uom": conversionUom, "factor_uom": factorUom}).Error
+}
+
+// UpdateUom mengubah satuan kanonik barang.
+func (r *goodsRepo) UpdateUom(ctx context.Context, id int64, uom string) error {
+	return r.db.WithContext(ctx).Model(&domain.Good{}).
+		Where("id = ?", id).
+		Update("uom", uom).Error
+}
+
+// UpdateCategory mengubah kategori kanonik barang.
+func (r *goodsRepo) UpdateCategory(ctx context.Context, id int64, category string) error {
+	return r.db.WithContext(ctx).Model(&domain.Good{}).
+		Where("id = ?", id).
+		Update("category", category).Error
 }

@@ -1,6 +1,8 @@
 package transaction
 
 import (
+	"context"
+
 	"fmt"
 	"math"
 	"regexp"
@@ -8,9 +10,31 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"smart-ledger-agent/internal/domain"
+	"smart-ledger-agent/internal/repository"
 	"smart-ledger-agent/internal/service/agent"
 )
+
+// resolveCategory menentukan kategori final transaksi: kategori kanonik di
+// master goods MENANG (stabil, tidak bisa digeser LLM per transaksi).
+// Bila master belum punya kategori dan LLM mengekstrak satu, kategori itu
+// di-seed ke master agar transaksi berikutnya konsisten.
+func resolveCategory(ctx context.Context, goodsRepo repository.GoodsRepository, db *gorm.DB, goods *domain.Good, extracted string) string {
+	if goods == nil {
+		return extracted
+	}
+	if goods.Category != "" {
+		return goods.Category
+	}
+	if extracted != "" {
+		if err := goodsRepo.WithTx(db).UpdateCategory(ctx, goods.ID, extracted); err == nil {
+			goods.Category = extracted
+		}
+	}
+	return extracted
+}
 
 // ── Date parsing helpers ──
 

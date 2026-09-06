@@ -59,6 +59,7 @@ Intent classification stays as a single LLM hop in the `Orchestrator` (internal/
 | `transactionAgent` | `record_transaction` | `prompt.go` | internal/service/transaction/ |
 | `stockAgent` | `get_stock` | `prompt.go` | internal/service/stock/ |
 | `consumptionAgent` | `consumption` | `prompt.go` | internal/service/consumption/ |
+| `goodsAgent` | `goods` | `prompt.go` | internal/service/goods/ |
 | `reportAgent` | `get_report` | `prompt.go` | internal/service/report/ |
 | `systemAgent` | `init`, `help`, `info`, `none` | `prompt.go` | internal/service/system/ |
 
@@ -359,6 +360,7 @@ erDiagram
         varchar(32) code UK "with chat_id, slug auto-generated"
         varchar(128) name "single source of item names"
         varchar(32) uom "canonical unit (galon, pcs...)"
+        varchar(32) category "canonical category, fixed per item"
         varchar(32) conversion_uom "1 uom = factor_uom conversion_uom"
         numeric(12,3) factor_uom "learned/curated conversion"
         timestamptz created_at
@@ -417,6 +419,7 @@ erDiagram
 
 - **Relation by id, not name.** `inventory`, `consumption_cycles`, and `transactions` reference `goods_id`; `transactions.item_name` is kept only as a denormalized display snapshot for reports.
 - **Auto-create.** New item names from LLM extraction are resolved via `GoodsRepository.GetOrCreateByName` scoped to the chat (case-insensitive match, code generated from the name slug, unique per `chat_id + code`).
+- **Canonical category.** `category` on the goods row wins over per-transaction LLM classification — once set (explicitly or seeded from the first purchase), it never drifts. `GetCategorySummary` reads it for stock overviews.
 - **UOM conversion factors.** `uom` = canonical unit, `conversion_uom` + `factor_uom` = conversion learned from the chat's users (e.g. "1 galon = 15 lt" from a "15lt" answer). Learned factors are stored on the chat's goods row, so subsequent usage in the same chat converts stably — prompts never invent conversion factors.
 - **Name resolution.** LLM-facing contracts still use `item_name` strings; the resolver maps name → `goods` (same chat) → chat inventory (exact → ILIKE join → original-message filter).
 
@@ -587,6 +590,7 @@ smart-ledger-agent/
 │   │   ├── transaction/        # record_transaction agent + extraction prompt
 │   │   ├── stock/              # get_stock agent
 │   │   ├── consumption/        # consumption cycle service + agent
+│   │   ├── goods/              # goods master agent (list/info/set_factor/set_uom)
 │   │   ├── report/             # get_report agent + formatting + date parsing
 │   │   └── system/             # init/help/info/none agent
 │   ├── waha/                   # WhatsApp HTTP client

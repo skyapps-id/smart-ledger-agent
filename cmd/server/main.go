@@ -22,6 +22,7 @@ import (
 	"smart-ledger-agent/internal/sender"
 	"smart-ledger-agent/internal/service/agent"
 	"smart-ledger-agent/internal/service/consumption"
+	"smart-ledger-agent/internal/service/goods"
 	"smart-ledger-agent/internal/service/orchestrator"
 	"smart-ledger-agent/internal/service/report"
 	"smart-ledger-agent/internal/service/stock"
@@ -97,6 +98,7 @@ func main() {
 		transaction.NewAgent(db, txnRepo, goodsRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
 		stock.NewAgent(db, goodsRepo, invRepo, txnRepo, replySender, logger),
 		consumption.NewAgentWithReasoner(db, goodsRepo, invRepo, logRepo, consumptionService, invCache, pendingConfirms, conversionReasoner, replySender, logger),
+		goods.NewAgent(db, goodsRepo, invRepo, pendingConfirms, replySender, logger),
 		report.NewAgent(db, txnRepo, logRepo, replySender, logger),
 		system.NewAgent(db, chatRepo, txnRepo, replySender, logger),
 	}

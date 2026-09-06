@@ -12,13 +12,14 @@ ACTIONS & PARAMS:
 1. init — aktivasi ledger ("init","mulai","daftar","aktivasi","start" di awal pesan). ledger_name? (mis. "init dompetku")
 2. help — panduan ("bantuan","bantu","panduan","menu","format","help","cara pakai","guna"). params {}
 3. info — identitas sesi/chat ("info","sesi","session","debug","identitas"). params {}
-4. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]"). item_filter? ("stok kecap" → "kecap")
-5. get_report — laporan keuangan/pemakaian ("pengeluaran","pengeluaran apa aja","pemasukan","pendapatan","laporan","ringkasan","rekap","total","boros","cash flow","arus kas","sisa uang","sisa dana","sisa kas","uang saya").
+4. goods — master barang & satuan ("tambah barang [x] satuan [u]","daftarkan barang","master barang","katalog barang","daftar barang","info barang [x]","set 1 [barang] [n][satuan]","ubah konversi [barang] jadi [n][satuan]","set satuan [barang] jadi [satuan]","set kategori [barang] jadi [kategori]"). goods_action=list|info|add|set_factor|set_uom|set_category; item_name?; factor_qty?; factor_unit?; unit?; category? ("set 1 galon 15lt" → item_name "galon", factor_qty 15, factor_unit "lt").
+5. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]"). item_filter? ("stok kecap" → "kecap")
+6. get_report — laporan keuangan/pemakaian ("pengeluaran","pengeluaran apa aja","pemasukan","pendapatan","laporan","ringkasan","rekap","total","boros","cash flow","arus kas","sisa uang","sisa dana","sisa kas","uang saya").
    report_type=summary|income|expense|expense_by_item|consumption; period=today|yesterday|this_week|last_week|this_month|last_month|custom|all; item_filter?; from_date?,to_date? (YYYY-MM-DD; wajib saat period=custom; "01/08" → tahun berjalan).
-6. consumption — pemakaian stok ("pakai","sudah/udah pakai","dipakai","ambil","terpakai","sudah terpakai","habis","konsumsi","pemakaian","barang/item aktif","history konsumsi").
+7. consumption — pemakaian stok ("pakai","sudah/udah pakai","dipakai","ambil","terpakai","sudah terpakai","habis","konsumsi","pemakaian","barang/item aktif","history konsumsi").
    consumption_action=use|update|complete|info|list|history|calculate; item_name?; usage_qty? (default 1); usage_unit? (default "pcs"); usage_date? (YYYY-MM-DD; use = tanggal mulai pakai, complete = tanggal habis); batch_number?; history: limit?; calculate: purchase_qty?, purchase_unit?, purchase_date?, end_date?
-7. record_transaction — pencatatan BARU. Pemicu: kata "beli","belanja","bayar","jual","gaji","gaji masuk","terima","dapet","bonus","thr","transfer","saldo awal","top up","isi pulsa","beli pulsa","token listrik","cicilan","tagihan" ATAU nominal uang (50rb/50ribu/50k/1.5jt/50.000/500000/rp). params {} — detail transaksi DIEKSTRAK LANGKAH BERIKUTNYA, jangan diisi di sini.
-8. none — sapaan/chitchat/tidak relevan ("halo","hai","makasih","terima kasih","ok","oke","siap","tes","test","ping"). params {}
+8. record_transaction — pencatatan BARU. Pemicu: kata "beli","belanja","bayar","jual","gaji","gaji masuk","terima","dapet","bonus","thr","transfer","saldo awal","top up","isi pulsa","beli pulsa","token listrik","cicilan","tagihan" ATAU nominal uang (50rb/50ribu/50k/1.5jt/50.000/500000/rp). params {} — detail transaksi DIEKSTRAK LANGKAH BERIKUTNYA, jangan diisi di sini.
+9. none — sapaan/chitchat/tidak relevan ("halo","hai","makasih","terima kasih","ok","oke","siap","tes","test","ping"). params {}
 
 PRIORITAS (cek berurutan, berhenti di kecocokan pertama):
 1. "pakai"/"sudah pakai"/"udah pakai"/"dipakai"/"ambil" → consumption use. Tanpa uang: "pakai beras 1 kg" BUKAN transaksi.
@@ -28,9 +29,10 @@ PRIORITAS (cek berurutan, berhenti di kecocokan pertama):
 5. "init"/"mulai"/"daftar"/"aktivasi"/"start" di awal pesan → init.
 6. "bantuan" dll → help; "info"/"sesi"/"debug" → info.
 7. "beli"/"bayar"/"jual"/"gaji"/"terima"/"top up" dll ATAU nominal uang → record_transaction, walau menyebut "stok" ("beli stok kecap 50rb" = transaksi, bukan query). KECUALI ada kata "harga" (query harga beli, bukan pencatatan) → get_stock.
-8. "stok"/"sisa"/"persediaan"/"inventaris" + BARANG → get_stock. CATATAN: "sisa uang/dana/kas" atau "berapa sisa saldo" → get_report (uang), sedangkan "sisa barang/stok/minyak" → get_stock (barang).
-9. "pengeluaran"/"pemasukan"/"laporan"/"ringkasan"/"total"/"rekap" → get_report.
-10. sisanya → none.
+8. "master barang"/"katalog barang"/"daftar barang" ATAU "set"/"ubah konversi"/"ubah satuan"/"set satuan" → goods (BUKAN get_stock). "barang"/"sisa barang" tanpa kata itu tetap get_stock.
+9. "stok"/"sisa"/"persediaan"/"inventaris" + BARANG → get_stock. CATATAN: "sisa uang/dana/kas" atau "berapa sisa saldo" → get_report (uang), sedangkan "sisa barang/stok/minyak" → get_stock (barang).
+10. "pengeluaran"/"pemasukan"/"laporan"/"ringkasan"/"total"/"rekap" → get_report.
+11. sisanya → none.
 
 Ekstraksi angka+satuan: qty dan unit diambil dari AKHIR pesan; nama item = sisa sebelumnya. "pakai susu uht 500ml 100ml" → item "susu uht 500ml", qty 100, unit "ml".
 Tanggal relatif → period: "hari ini"=today, "kemarin"=yesterday, "minggu ini/lalu", "bulan ini/lalu"; tanpa keterangan waktu → period tetap diisi (default "this_month" untuk laporan, "today" untuk pemakaian).
@@ -44,6 +46,16 @@ CONTOH:
 "harga beli terakhir susu bmt 800g" → {"action":"get_stock","params":{"item_filter":"susu bmt 800g"}}
 "masih ada susu gak?" → {"action":"get_stock","params":{"item_filter":"susu"}}
 "persedian" → {"action":"get_stock","params":{}}
+"tambah barang galon satuan galon" → {"action":"goods","params":{"goods_action":"add","item_name":"galon","unit":"galon"}}
+"tambah barang galon satuan galon kategori MINUMAN" → {"action":"goods","params":{"goods_action":"add","item_name":"galon","unit":"galon","category":"MINUMAN"}}
+"set kategori galon jadi MINUMAN" → {"action":"goods","params":{"goods_action":"set_category","item_name":"galon","category":"MINUMAN"}}
+"tambah barang galon satuan galon 1 galon 15lt" → {"action":"goods","params":{"goods_action":"add","item_name":"galon","unit":"galon","factor_qty":15,"factor_unit":"lt"}}
+"master barang" → {"action":"goods","params":{"goods_action":"list"}}
+"katalog barang" → {"action":"goods","params":{"goods_action":"list"}}
+"info barang galon" → {"action":"goods","params":{"goods_action":"info","item_name":"galon"}}
+"set 1 galon 15lt" → {"action":"goods","params":{"goods_action":"set_factor","item_name":"galon","factor_qty":15,"factor_unit":"lt"}}
+"ubah konversi galon jadi 19 liter" → {"action":"goods","params":{"goods_action":"set_factor","item_name":"galon","factor_qty":19,"factor_unit":"lt"}}
+"set satuan beras jadi kg" → {"action":"goods","params":{"goods_action":"set_uom","item_name":"beras","unit":"kg"}}
 "pengeluaran hari ini berapa" → {"action":"get_report","params":{"report_type":"expense","period":"today"}}
 "total pemasukan bulan ini" → {"action":"get_report","params":{"report_type":"income","period":"this_month"}}
 "pengeluaran per item kemarin" → {"action":"get_report","params":{"report_type":"expense_by_item","period":"yesterday"}}

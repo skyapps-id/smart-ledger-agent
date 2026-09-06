@@ -232,7 +232,7 @@ func (a *goodsAgent) handleInfo(ctx context.Context, msg entity.IncomingMessage,
 	if g.FactorUom > 0 && g.ConversionUom != "" {
 		fmt.Fprintf(&b, "Konversi: 1 %s = %g %s\n", uomOrDefault(g.Uom), g.FactorUom, g.ConversionUom)
 	} else {
-		b.WriteString("Konversi: belum diatur (\"set 1 " + g.Name + " 15lt\")\n")
+		fmt.Fprintf(&b, "Konversi: belum diatur (\"set 1 %s [angka][satuan]\")\n", g.Name)
 	}
 	if inv, ierr := a.invRepo.WithTx(a.db).GetByChatGoods(ctx, msg.ChatID, g.ID); ierr == nil {
 		fmt.Fprintf(&b, "Stok    : %g %s\n", inv.StockQty, inv.Unit)

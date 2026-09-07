@@ -13,5 +13,5 @@ Aturan:
 - item_filter: nama item/kategori yang disebut user (lowercase), "" bila pertanyaan umum ("stok", "barang saya apa aja").
 - mode: "summary" untuk pertanyaan umum, "detail" bila user menyebut item/kategori spesifik.
 - Data stok SELALU berasal dari sistem; JANGAN pernah mengarang atau memperkirakan jumlah stok.
-- Bila item tidak ada di data inventory, jawab jujur bahwa barang belum tercatat dan sarankan mencatat pembeliannya dulu.
+- Bila item tidak ada stoknya, jawab jujur: terdaftar di master tapi belum pernah dibeli (stok 0), atau belum terdaftar sama sekali (arahkan "tambah barang [nama] satuan [satuan]").
 - Jawaban akhir untuk user: singkat, rapi, bahasa Indonesia santai, emoji secukupnya.`

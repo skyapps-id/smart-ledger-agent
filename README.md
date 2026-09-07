@@ -418,10 +418,10 @@ erDiagram
 `goods` is a **per-chat catalog** — each chat (session/ledger) owns its own goods rows, so item names and learned conversion factors are isolated between chats, consistent with ledger isolation:
 
 - **Relation by id, not name.** `inventory`, `consumption_cycles`, and `transactions` reference `goods_id`; `transactions.item_name` is kept only as a denormalized display snapshot for reports.
-- **Auto-create.** New item names from LLM extraction are resolved via `GoodsRepository.GetOrCreateByName` scoped to the chat (case-insensitive match, code generated from the name slug, unique per `chat_id + code`).
+- **Check-first (no auto-create).** Transactions resolve items via `agent.ResolveGoods` (exact → LIKE → original-message filter); items not in the master are REJECTED with guidance to register first (`"tambah barang [x] satuan [u]"`). Explicit registration goes through `GoodsRepository.GetOrCreateByName` (case-insensitive, slug code, unique per `chat_id + code`).
 - **Canonical category.** `category` on the goods row wins over per-transaction LLM classification — once set (explicitly or seeded from the first purchase), it never drifts. `GetCategorySummary` reads it for stock overviews.
 - **UOM conversion factors.** `uom` = canonical unit, `conversion_uom` + `factor_uom` = conversion learned from the chat's users (e.g. "1 galon = 15 lt" from a "15lt" answer). Learned factors are stored on the chat's goods row, so subsequent usage in the same chat converts stably — prompts never invent conversion factors.
-- **Name resolution.** LLM-facing contracts still use `item_name` strings; the resolver maps name → `goods` (same chat) → chat inventory (exact → ILIKE join → original-message filter).
+- **Name resolution via DB query (no context injection).** LLM-facing contracts still use `item_name` strings and the LLM extracts names verbatim; matching happens post-extraction via `agent.ResolveGoods` (exact → LIKE → original-message filter) — zero extra prompt tokens.
 
 Tables are created automatically via GORM `AutoMigrate` on application start. Adding a new struct field → new column is added automatically (existing columns are not dropped).
 

@@ -1,247 +1,81 @@
 package consumption
 
 import (
-	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"smart-ledger-agent/internal/domain"
 )
 
-// unitToBase menormalkan satuan ke satuan dasar: berat/volume → gr/ml,
-// satuan hitung (pcs/buah/...) → ct. ok=false bila satuan tak dikenal.
-func unitToBase(u string, q float64) (base string, val float64, ok bool) {
-	switch u {
-	case "g", "gr", "gram":
-		return "gr", q, true
-	case "kg", "kilogram":
-		return "gr", q * 1000, true
-	case "ml", "mililiter":
-		return "ml", q, true
-	case "l", "lt", "ltr", "liter":
-		return "ml", q * 1000, true
-	case "pcs", "pc", "buah", "keping", "ct":
-		return "ct", q, true
-	}
-	return u, q, false
+// unitAliases menyamaratakan ejaan satuan umum (murni alias teks, tanpa
+// matematika konversi apa pun).
+var unitAliases = map[string]string{
+	"l": "lt", "ltr": "lt", "liter": "lt",
+	"mililiter": "ml",
+	"gram":      "gr",
+	"kilogram":  "kg",
+	"pc":        "pcs", "buah": "pcs", "keping": "pcs",
 }
 
-// sizeInNameRe mencari pola angka + satuan isi berat/volume pada nama barang.
-// Alternatif yang lebih panjang (lt/ltr/liter) harus mendahului "l"
-// agar tidak terpotong ("15lt" jangan terbaca "15 l").
-var sizeInNameRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(ml|mililiter|lt|ltr|l|liter|gr|gram|g|kg|kilogram)`)
-
-// countInNameRe mencari pola angka + satuan hitung (mis. "48pcs").
-var countInNameRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*(pcs|pc|buah|keping)`)
-
-// trailingNumRe mencari angka telanjang di akhir nama barang ("popok 48").
-var trailingNumRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*$`)
-
-// extractSizeFromItemName mengambil ukuran isi mentah dari nama barang.
-// "le minerale galon 15lt" → (15, "lt"); "susu uht 500ml" → (500, "ml");
-// "pampers mamypoko 48pcs" → (48, "pcs"); "pampers mamypoko 48" → (48, "pcs").
-func extractSizeFromItemName(itemName string) (float64, string) {
-	lower := strings.ToLower(itemName)
-	if m := sizeInNameRe.FindStringSubmatch(lower); len(m) >= 3 {
-		if qty, err := strconv.ParseFloat(m[1], 64); err == nil {
-			return qty, m[2]
-		}
+// NormalizeUnit menyamakan ejaan satuan (lowercase + alias).
+func NormalizeUnit(u string) string {
+	u = strings.ToLower(strings.TrimSpace(u))
+	if alias, ok := unitAliases[u]; ok {
+		return alias
 	}
-	if m := countInNameRe.FindStringSubmatch(lower); len(m) >= 3 {
-		if qty, err := strconv.ParseFloat(m[1], 64); err == nil {
-			return qty, m[2]
-		}
-	}
-	if m := trailingNumRe.FindStringSubmatch(lower); len(m) >= 2 {
-		if qty, err := strconv.ParseFloat(m[1], 64); err == nil {
-			return qty, "pcs"
-		}
-	}
-	return 0, ""
+	return u
 }
 
-// convertScale mengonversi pemakaian ke satuan inventory bila keduanya
-// se-dimensi (gr↔gr/ml↔ml/ct↔ct) — konversi skala murni (gr→kg, ml→liter).
-func convertScale(inv *domain.Inventory, qty float64, unit string) (float64, string, bool) {
+// ConvertUsage mengonversi jumlah pemakaian ke SATUAN STOK, HANYA dari
+// faktor resmi master goods — tanpa heuristik/nama barang/penalaran:
+//  1. satuan pemakaian == satuan stok  → jumlah apa adanya;
+//  2. satuan pemakaian == ConversionUom → jumlah / FactorUom (mis. 3 lt
+//     pada galon 15 lt → 0.2 galon);
+//  3. selain itu → ok=false: satuan tidak dikenal, caller memberi tahu
+//     user satuan yang diterima (lihat UsageUnitHint).
+func ConvertUsage(inv *domain.Inventory, qty float64, unit string) (float64, string, bool) {
 	if inv == nil || qty <= 0 || unit == "" {
 		return qty, unit, false
 	}
-	u := strings.ToLower(strings.TrimSpace(unit))
-	invUnit := strings.ToLower(strings.TrimSpace(inv.Unit))
-	usageBase, usageVal, isUsageBase := unitToBase(u, qty)
-	invBase, _, isInvBase := unitToBase(invUnit, 1)
-	if !isInvBase || !isUsageBase {
-		return qty, unit, false
+	u := NormalizeUnit(unit)
+	if u == NormalizeUnit(inv.Unit) {
+		return qty, inv.Unit, true
 	}
-	switch {
-	case invBase == "gr" && usageBase == "gr":
-		if invUnit == "kg" {
-			return usageVal / 1000, inv.Unit, true
-		}
-		return usageVal, inv.Unit, true
-	case invBase == "ml" && usageBase == "ml":
-		if invUnit == "l" || invUnit == "lt" || invUnit == "ltr" || invUnit == "liter" {
-			return usageVal / 1000, inv.Unit, true
-		}
-		return usageVal, inv.Unit, true
-	case invBase == "ct" && usageBase == "ct":
-		return usageVal, inv.Unit, true
+	if inv.Good != nil && inv.Good.FactorUom > 0 && inv.Good.ConversionUom != "" &&
+		u == NormalizeUnit(inv.Good.ConversionUom) {
+		return qty / inv.Good.FactorUom, inv.Unit, true
 	}
 	return qty, unit, false
 }
 
-// convertByContent mengonversi pemakaian ke satuan kemasan inventory
-// memakai isi per kemasan (contentQty contentUnit, mis. 15 lt per galon).
-// ok=false bila dimensi pemakaian dan isi tidak kompatibel.
-func convertByContent(inv *domain.Inventory, contentQty float64, contentUnit string, qty float64, unit string) (float64, string, bool) {
-	if inv == nil || contentQty <= 0 || contentUnit == "" {
-		return qty, unit, false
-	}
-	u := strings.ToLower(strings.TrimSpace(unit))
-	cu := strings.ToLower(strings.TrimSpace(contentUnit))
-	usageBase, usageVal, okU := unitToBase(u, qty)
-	cBase, cVal, okC := unitToBase(cu, contentQty)
-	if !okU || !okC || cVal <= 0 || usageBase != cBase {
-		return qty, unit, false
-	}
-	return usageVal / cVal, inv.Unit, true
-}
-
-// contentFromMessage mencari pola "<kemasan> <isi>" pada pesan user
-// (mis. "pakai le minerale galon 15lt" atau "1 ball isi 48").
-func contentFromMessage(inv *domain.Inventory, message string) (float64, string, bool) {
-	if inv == nil || message == "" {
-		return 0, "", false
-	}
-	invUnit := strings.ToLower(strings.TrimSpace(inv.Unit))
-	if _, _, isInvBase := unitToBase(invUnit, 1); isInvBase {
-		return 0, "", false
-	}
-	re := regexp.MustCompile(`(?:^|\s)` + regexp.QuoteMeta(invUnit) + `(?:\s*isi)?\s*(\d+(?:\.\d+)?)\s*(ml|mililiter|lt|ltr|l|liter|gr|gram|g|kg|kilogram|pcs|pc|buah|keping)?\b`)
-	m := re.FindStringSubmatch(strings.ToLower(message))
-	if len(m) < 2 {
-		return 0, "", false
-	}
-	contentQty, err := strconv.ParseFloat(m[1], 64)
-	if err != nil {
-		return 0, "", false
-	}
-	contentUnit := m[2]
-	if contentUnit == "" {
-		contentUnit = "pcs" // angka telanjang setelah kemasan → isi hitung
-	}
-	return contentQty, contentUnit, true
-}
-
-// goodsFactor mengembalikan faktor konversi tersimpan pada master goods
-// (dipelajari dari user): 1 inv.Unit = factor conversionUom.
-func goodsFactor(inv *domain.Inventory) (float64, string) {
-	if inv == nil || inv.Good == nil {
-		return 0, ""
-	}
-	return inv.Good.FactorUom, inv.Good.ConversionUom
-}
-
-// ResolveUsageConversion mengonversi pemakaian ke satuan inventory dengan
-// urutan prioritas: (1) konversi skala se-dimensi, (2) faktor tersimpan di
-// master goods (dipelajari dari jawaban user), (3) isi dari nama barang,
-// (4) pola "<kemasan> <isi>" pada pesan. Mengembalikan learnedQty/learnedUnit
-// = isi yang BARU diketahui dari nama/pesan agar caller menyimpannya ke
-// master goods (pemakaian berikutnya stabil, tidak bergantung pola pesan).
-func ResolveUsageConversion(inv *domain.Inventory, qty float64, unit, message string) (convQty float64, convUnit string, learnedQty float64, learnedUnit string, ok bool) {
+// UsageUnitHint merangkai satuan yang diterima untuk pemakaian barang ini,
+// mis. "galon atau lt" — dipakai pesan bimbingan saat satuan tak dikenal.
+func UsageUnitHint(inv *domain.Inventory) string {
 	if inv == nil {
-		return qty, unit, 0, "", false
+		return ""
 	}
-	if q, u, okC := convertScale(inv, qty, unit); okC {
-		return q, u, 0, "", true
+	if inv.Good != nil && inv.Good.ConversionUom != "" && inv.Good.FactorUom > 0 {
+		return NormalizeUnit(inv.Unit) + " atau " + NormalizeUnit(inv.Good.ConversionUom)
 	}
-	if factorQty, factorUnit := goodsFactor(inv); factorQty > 0 {
-		if q, u, okC := convertByContent(inv, factorQty, factorUnit, qty, unit); okC {
-			return q, u, 0, "", true
-		}
-	}
-	if perQty, perUnit := extractSizeFromItemName(inv.Name()); perQty > 0 {
-		if q, u, okC := convertByContent(inv, perQty, perUnit, qty, unit); okC {
-			return q, u, perQty, perUnit, true
-		}
-	}
-	if contentQty, contentUnit, found := contentFromMessage(inv, message); found {
-		if q, u, okC := convertByContent(inv, contentQty, contentUnit, qty, unit); okC {
-			return q, u, contentQty, contentUnit, true
-		}
-	}
-	return qty, unit, 0, "", false
+	return NormalizeUnit(inv.Unit)
 }
 
-// ConversionQuestion menyusun pertanyaan faktor konversi bila pemakaian
-// (satuan dasar gr/ml/ct) tidak bisa dikonversi ke satuan kemasan inventory
-// dan isi per kemasan belum diketahui. String kosong bila tidak relevan.
-func ConversionQuestion(inv *domain.Inventory, usageUnit string) string {
-	if inv == nil || usageUnit == "" {
-		return ""
+// normalizeDefaultUnit mengganti satuan "pcs" bawaan LLM dengan satuan
+// stok (dari master goods) BILA pesan user tidak benar-benar menyebut
+// "pcs" — "pakai galon" berarti 1 galon, bukan 1 pcs. Sebutan eksplisit
+// ("popok 48pcs") tetap pcs literal (dikonversi via faktor master).
+func normalizeDefaultUnit(msgText, usageUnit, invUnit string) string {
+	if usageUnit == "pcs" && invUnit != "" && invUnit != "pcs" &&
+		!strings.Contains(strings.ToLower(msgText), "pcs") {
+		return invUnit
 	}
-	invUnit := strings.ToLower(strings.TrimSpace(inv.Unit))
-	u := strings.ToLower(strings.TrimSpace(usageUnit))
-	if strings.EqualFold(invUnit, u) {
-		return ""
-	}
-	if _, _, isInvBase := unitToBase(invUnit, 1); isInvBase {
-		return ""
-	}
-	if _, _, isUsageBase := unitToBase(u, 1); !isUsageBase {
-		return ""
-	}
-	if factorQty, factorUnit := goodsFactor(inv); factorQty > 0 && factorUnit != "" {
-		return ""
-	}
-	return fmt.Sprintf(
-		"Stok %s tercatat dalam satuan %s. 1 %s setara berapa %s? Balas dengan angka+satuan (contoh: 15%s)",
-		inv.Name(), invUnit, invUnit, u, u,
-	)
+	return usageUnit
 }
 
-// FormatQtyForDisplay memformat nilai satuan dasar memakai satuan ASLI yang
-// user pakai (dari ukuran di nama barang, atau satuan beli) — bot TIDAK
-// mengambil keputusan konversi sepihak. Contoh: item "galon 15lt" → 15000 ml
-// ditampilkan "15 lt"; dibeli per "kg" → 1000 gr ditampilkan "1 kg"; tanpa
-// info satuan user → satuan dasar apa adanya ("6000 gr"), tidak di-upgrade.
-func FormatQtyForDisplay(qtyBase float64, baseUnit, itemName, purchaseUnit string) (string, string) {
-	format := func(v float64) string {
-		return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
-	}
-	if _, raw := extractSizeFromItemName(itemName); raw != "" {
-		if b, val, ok := unitToBase(raw, 1); ok && b == baseUnit && val > 0 {
-			return format(qtyBase / val), raw
-		}
-	}
-	if b, val, ok := unitToBase(strings.ToLower(strings.TrimSpace(purchaseUnit)), 1); ok && b == baseUnit && val > 0 {
-		return format(qtyBase / val), strings.TrimSpace(purchaseUnit)
-	}
-	return format(qtyBase), baseUnit
-}
-
-// ConvertToInventoryUnit mengonversi jumlah pemakaian hasil LLM (mis. 200 g
-// atau 5 pcs) ke satuan inventory (mis. 1 pcs / 0.1 ball) memakai ukuran isi
-// yang tertera pada nama barang.
-func ConvertToInventoryUnit(inv *domain.Inventory, qty float64, unit string) (float64, string) {
-	if q, u, ok := convertScale(inv, qty, unit); ok {
-		return q, u
-	}
-	if inv != nil {
-		if perQty, perUnit := extractSizeFromItemName(inv.Name()); perQty > 0 {
-			if q, u, ok := convertByContent(inv, perQty, perUnit, qty, unit); ok {
-				return q, u
-			}
-		}
-	}
-	return qty, unit
-}
-
-// ConvertToInventoryUnitFromMessage seperti ResolveUsageConversion tetapi
-// hanya mengembalikan hasil konversinya (tanpa info learning).
-func ConvertToInventoryUnitFromMessage(inv *domain.Inventory, qty float64, unit, message string) (float64, string) {
-	q, u, _, _, _ := ResolveUsageConversion(inv, qty, unit, message)
-	return q, u
+// formatQty memformat angka + satuan untuk display — nilai apa adanya
+// (tanpa konversi), dibulatkan 2 desimal.
+func formatQty(qty float64, unit string) (string, string) {
+	v := strconv.FormatFloat(math.Round(qty*100)/100, 'f', -1, 64)
+	return v, unit
 }

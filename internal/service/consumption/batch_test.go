@@ -198,22 +198,25 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 }
 
 // TestStartUsageSemantics mengunci semantic satuan cycle: PurchaseQty dalam
-// satuan inventory (pcs), ConversionFactor = isi gr/ml per satuan inventory
-// (dari nama barang), ConsumedQty dalam satuan dasar (gr).
+// satuan inventory (pcs), ConversionFactor = faktor master apa adanya
+// (200 g per pcs), ConsumedQty dalam satuan konversi master (g).
 func TestStartUsageSemantics(t *testing.T) {
 	db := setupBatchTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	svc := NewService(db, cycleRepo, slog.Default())
 
-	bmt := mustGood(t, db, "chat-uom", "susu bmt 200g")
+	bmt := mustGood(t, db, "chat-uom", "susu bmt")
+	bmt.ConversionUom, bmt.FactorUom = "g", 200
+	require.NoError(t, db.Model(&domain.Good{}).Where("id = ?", bmt.ID).
+		Updates(map[string]any{"conversion_uom": bmt.ConversionUom, "factor_uom": bmt.FactorUom}).Error)
 	cycle, err := svc.StartUsage(context.Background(), "chat-uom", bmt, 1, "pcs", 1.0, "2026-03-01")
 	require.NoError(t, err)
 
 	assert.Equal(t, 1.0, cycle.PurchaseQty)        // satuan inventory
 	assert.Equal(t, "pcs", cycle.PurchaseUnit)     //
-	assert.Equal(t, 200.0, cycle.ConversionFactor) // gr per pcs
-	assert.Equal(t, 200.0, cycle.ConsumedQty)      // satuan dasar
-	assert.Equal(t, "gr", cycle.ConsumedUnit)      //
+	assert.Equal(t, 200.0, cycle.ConversionFactor) // 200 g per pcs, dari master
+	assert.Equal(t, 200.0, cycle.ConsumedQty)      // satuan konversi master
+	assert.Equal(t, "g", cycle.ConsumedUnit)       //
 }
 
 // TestListActiveByItemMultiBatch: dua batch aktif untuk satu item harus

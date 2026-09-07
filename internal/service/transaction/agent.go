@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/patrickmn/go-cache"
 	"gorm.io/gorm"
 
 	"smart-ledger-agent/internal/domain"
@@ -33,7 +31,6 @@ type transactionAgent struct {
 	// extractionPrompt adalah system prompt milik transactionAgent untuk
 	// ekstraksi entitas transaksi (lihat prompt.go).
 	extractionPrompt string
-	invCache         *cache.Cache
 	// pending menyimpan konfirmasi pilihan barang menunggu jawaban user.
 	pending *agent.PendingConfirms
 	sender  agent.MessageSender
@@ -48,7 +45,6 @@ func NewAgent(
 	logRepo repository.StockLogRepository,
 	consumptionService *consumption.Service,
 	extractor llm.Extractor,
-	invCache *cache.Cache,
 	pending *agent.PendingConfirms,
 	sender agent.MessageSender,
 	logger *slog.Logger,
@@ -62,7 +58,6 @@ func NewAgent(
 		consumptionService: consumptionService,
 		llm:                extractor,
 		extractionPrompt:   transactionSystemPrompt,
-		invCache:           invCache,
 		pending:            pending,
 		sender:             sender,
 		log:                logger,
@@ -90,17 +85,13 @@ func (a *transactionAgent) handleRecordTransaction(ctx context.Context, msg enti
 		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, agent.PreInitMessage, intentCost)
 	}
 
-	// Path pencatatan: ekstraksi LLM -> persist.
-	// Sertakan snapshot inventory (pakai search optimization) agar LLM meresolve nama barang
-	// ke item yang sudah ada di inventory chat ini.
-	items := a.searchInventory(ctx, msg.ChatID, msg.Text)
-	invContext := llm.BuildInventoryPrompt(items)
-
-	// Hop LLM ekstraksi: catat ke task (biaya + durasi) untuk ringkasan orchestrator.
+	// Path pencatatan: ekstraksi LLM -> persist. Tanpa context injection
+	// (hemat token): LLM mengekstrak nama barang verbatim; pencocokan ke
+	// master goods dilakukan persist via query DB (agent.ResolveGoods).
 	// TimeContext memberi tahu LLM tanggal hari ini agar kata relatif
 	// ("kemarin", "besok") dan tahun berjalan tidak dihalusinasi.
 	t0 := time.Now()
-	ext, usage, err := a.llm.Extract(ctx, a.extractionPrompt+llm.TimeContext(time.Now()), msg.Text, invContext, msg.ChatID)
+	ext, usage, err := a.llm.Extract(ctx, a.extractionPrompt+llm.TimeContext(time.Now()), msg.Text, msg.ChatID)
 	agent.TaskFromContext(ctx).AddStep("transaction", "llm.extract", string(ext.Type), usage.CostUSD, err, time.Since(t0))
 	if err != nil {
 		a.log.ErrorContext(ctx, "gagal ekstraksi LLM", "err", err)
@@ -131,9 +122,9 @@ func (a *transactionAgent) handleRecordTransaction(ctx context.Context, msg enti
 func (a *transactionAgent) persist(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction, forcedItem string) (string, error) {
 	switch ext.Type {
 	case domain.ExtractionIncome:
-		return a.handleIncome(ctx, msg, ext)
+		return a.handleIncome(ctx, msg, ext, forcedItem)
 	case domain.ExtractionExpense:
-		return a.handleExpense(ctx, msg, ext)
+		return a.handleExpense(ctx, msg, ext, forcedItem)
 	case domain.ExtractionConsumption:
 		return a.handleConsumption(ctx, msg, ext, forcedItem)
 	default:
@@ -142,24 +133,33 @@ func (a *transactionAgent) persist(ctx context.Context, msg entity.IncomingMessa
 }
 
 // handleIncome: catat transaksi pemasukan saja (RFC §5.1).
-func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
+func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction, forcedItem string) (string, error) {
 	txnDate, err := parseTransactionDate(ext.TransactionDate)
 	if err != nil {
 		return "", fmt.Errorf("format tanggal tidak valid: %w", err)
 	}
-
-	// Resolve nama barang ke master goods (auto-create bila baru) —
-	// relasi transaksi via goods_id, nama disimpan sebagai snapshot display.
-	goods, err := a.goodsRepo.WithTx(a.db).GetOrCreateByName(ctx, msg.ChatID, ext.ItemName, ext.Unit)
-	if err != nil {
-		return "", fmt.Errorf("resolve goods: %w", err)
+	if forcedItem != "" {
+		ext.ItemName = forcedItem
 	}
+
+	// Master-first: barang HARUS terdaftar di goods — tidak ada auto-create.
+	goods, err := agent.ResolveGoods(ctx, a.db, a.goodsRepo, msg.ChatID, msg.Text, ext.ItemName)
+	if err != nil {
+		if amb, ok := err.(*agent.AmbiguousGoodsError); ok {
+			// Nama mirip beberapa barang: konfirmasi bernomor; jawaban "1"
+			// di-resume tanpa LLM intent hop.
+			return a.confirmGoodsChoice(ctx, msg, amb)
+		}
+		return "", goodsRejectError(err, ext.ItemName)
+	}
+	// Kategori kanonik dari master menang; seed bila belum ada.
+	category := resolveCategory(ctx, a.goodsRepo, a.db, goods, ext.Category)
 
 	txn := &domain.Transaction{
 		ChatID:          msg.ChatID,
 		SenderPhone:     msg.UserPhone,
 		Type:            domain.TransactionIncome,
-		Category:        ext.Category,
+		Category:        category,
 		GoodsID:         goods.ID,
 		ItemName:        goods.Name,
 		Amount:          ext.Amount,
@@ -171,30 +171,58 @@ func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.Incoming
 	}
 	return fmt.Sprintf(
 		"Pemasukan tercatat: %s sebesar Rp%s (%s).",
-		ext.ItemName, agent.FormatRupiah(ext.Amount), ext.Category,
+		goods.Name, agent.FormatRupiah(ext.Amount), category,
 	), nil
 }
 
+// confirmGoodsChoice menangani nama barang yang mirip beberapa barang
+// master: daftar kandidat bernomor dan daftarkan pending — jawaban "1"/"2"
+// di-resume orchestrator tanpa LLM hop dengan item terpilih.
+func (a *transactionAgent) confirmGoodsChoice(ctx context.Context, msg entity.IncomingMessage, amb *agent.AmbiguousGoodsError) (string, error) {
+	if a.pending != nil {
+		a.pending.Set(msg.ChatID, agent.PendingChoice{
+			Action:       domain.ActionRecordTransaction,
+			OptionKey:    "item_name",
+			Options:      agent.GoodsOptionNames(amb),
+			OriginalText: msg.Text,
+		})
+	}
+	return agent.FormatGoodsChoice(msg.Text, amb), nil
+}
+
 // handleExpense: catat pengeluaran. Hanya tambah stok bila affects_stock=true (RFC §7.1).
-func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction) (string, error) {
+func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction, forcedItem string) (string, error) {
+	if forcedItem != "" {
+		ext.ItemName = forcedItem
+	}
+
+	// Master-first: resolve SEBELUM membuka DB transaction agar konfirmasi
+	// pilihan barang bisa dikirim tanpa rollback. Barang HARUS terdaftar —
+	// tidak ada auto-create.
+	goods, rerr := agent.ResolveGoods(ctx, a.db, a.goodsRepo, msg.ChatID, msg.Text, ext.ItemName)
+	if rerr != nil {
+		if amb, ok := rerr.(*agent.AmbiguousGoodsError); ok {
+			return a.confirmGoodsChoice(ctx, msg, amb)
+		}
+		return "", goodsRejectError(rerr, ext.ItemName)
+	}
+	// Kategori kanonik dari master menang; seed bila belum ada.
+	category := resolveCategory(ctx, a.goodsRepo, a.db, goods, ext.Category)
+	// Satuan stok dari master menang (master-first): ekstraksi LLM hanya
+	// fallback bila uom master belum diatur (hindari "pcs" ngaco).
+	stockUnit := goods.Uom
+	if stockUnit == "" {
+		stockUnit = ext.Unit
+	}
+
 	var inv *domain.Inventory
 	var lastPurchase *domain.Transaction
 	var txnDate time.Time
-	var category string
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Resolve nama barang ke master goods (auto-create bila baru):
-		// seluruh relasi berikutnya (transaksi, inventory) via goods_id.
-		goods, err := a.goodsRepo.WithTx(tx).GetOrCreateByName(ctx, msg.ChatID, ext.ItemName, ext.Unit)
-		if err != nil {
-			return fmt.Errorf("resolve goods: %w", err)
-		}
-		// Kategori kanonik dari master menang; bila master belum punya,
-		// seed dari ekstraksi LLM agar transaksi berikutnya stabil.
-		category = resolveCategory(ctx, a.goodsRepo, tx, goods, ext.Category)
 
 		// Skip financial transaction creation if amount is 0 but affects stock (inventory-only update)
 		if ext.Amount == 0 && ext.AffectsStock {
-			upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, ext.Unit)
+			upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, stockUnit)
 			if err != nil {
 				return fmt.Errorf("tambah stok: %w", err)
 			}
@@ -256,7 +284,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return nil
 		}
 
-		upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, ext.Unit)
+		upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, stockUnit)
 		if err != nil {
 			return fmt.Errorf("tambah stok: %w", err)
 		}
@@ -279,13 +307,11 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 
 	// Balasan berbeda tergantung apakah stok ikut tercatat.
 	if inv != nil {
-		a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berubah
-
 		// Jika amount=0 tapi stok terupdate, berarti ini inventory-only update
 		if ext.Amount == 0 {
 			return fmt.Sprintf(
 				"Stok tercatat: %s +%g %s. Stok saat ini: %g %s.",
-				ext.ItemName, ext.Quantity, ext.Unit,
+				goods.Name, ext.Quantity, stockUnit,
 				inv.StockQty, inv.Unit,
 			), nil
 		}
@@ -344,7 +370,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		// Build reply utama
 		baseReply := fmt.Sprintf(
 			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
-			ext.ItemName, ext.Quantity, ext.Unit,
+			goods.Name, ext.Quantity, stockUnit,
 			agent.FormatRupiah(ext.Amount), category,
 			inv.StockQty, inv.Unit,
 		)
@@ -433,55 +459,22 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 	// Gunakan nama resmi barang (relasi goods) untuk operasi berikutnya.
 	ext.ItemName = inv.Name()
 
-	// Konversi jumlah pakai ke satuan inventory dengan prioritas: isi
-	// tersimpan → isi di nama barang → pola "<kemasan> <isi>" di pesan.
-	// Bila tak bisa dikonversi dan isinya belum diketahui, tanya user dulu
-	// (jawaban bebas "15lt" di-resume ke consumption agent).
-	convQty, convUnit, learnedQty, learnedUnit, ok := consumption.ResolveUsageConversion(inv, ext.Quantity, ext.Unit, msg.Text)
-	if ok {
-		ext.Quantity, ext.Unit = convQty, convUnit
-		if learnedQty > 0 {
-			// Promosikan faktor yang baru diketahui ke master goods chat ini.
-			if err := a.goodsRepo.WithTx(a.db).UpdateConversion(ctx, inv.GoodsID, learnedUnit, learnedQty); err != nil {
-				a.log.ErrorContext(ctx, "gagal simpan faktor konversi", "err", err)
-			}
-		}
-	} else if q := consumption.ConversionQuestion(inv, ext.Unit); q != "" {
-		if a.pending != nil {
-			a.pending.Set(msg.ChatID, agent.PendingChoice{
-				Action: domain.ActionConsumption,
-				Params: map[string]interface{}{
-					"consumption_action": "use",
-					"item_name":          ext.ItemName,
-					"usage_qty":          ext.Quantity,
-					"usage_unit":         ext.Unit,
-					"usage_date":         ext.TransactionDate,
-				},
-				FreeTextKey:  "conversion_answer",
-				OriginalText: msg.Text,
-			})
-		}
-		return q, nil
+	// Default "pcs" dari LLM (pesan tidak menyebut pcs) = satu satuan stok
+	// dari master — normalkan sebelum konversi ("ambil galon" → galon).
+	if ext.Unit == "pcs" && inv.Unit != "" && inv.Unit != "pcs" &&
+		!strings.Contains(strings.ToLower(msg.Text), "pcs") {
+		ext.Unit = inv.Unit
 	}
 
-	// Extract satuan asli dari nama item untuk consumption tracking
-	// Contoh: "susu uht 500ml" → satuan asli: "500ml"
-	originalUnit := consumption.ExtractOriginalUnitFromItemName(ext.ItemName)
-
-	// Jika user menyebutkan satuan spesifik dalam consumption, gunakan itu sebagai satuan asli
-	if ext.Unit != "pcs" && ext.Unit != "" {
-		originalUnit = ext.Unit
+	// Konversi jumlah pakai ke satuan stok HANYA dari faktor master goods.
+	// Satuan lain DITOLAK dengan bimbingan — tanpa heuristik nama barang.
+	convQty, convUnit, ok := consumption.ConvertUsage(inv, ext.Quantity, ext.Unit)
+	if !ok {
+		return "", agent.NewBusinessError(fmt.Sprintf(
+			"Satuan '%s' tidak dikenali untuk %s. Sebut dalam %s, atau atur faktornya: \"set 1 %s [angka][satuan]\".",
+			ext.Unit, ext.ItemName, consumption.UsageUnitHint(inv), ext.ItemName))
 	}
-
-	// Konversi quantity ke satuan asli untuk consumption tracking
-	// Contoh: inventory 1 pcs (500ml), user pakai 1 pcs → consumption: 500ml
-	quantityInOriginalUnit := ext.Quantity
-	if originalUnit != "" && ext.Unit == "pcs" {
-		// User sebut "pakai susu uht 500ml" (1 pcs) → extract qty dari nama item
-		if extractedQty := consumption.ExtractQuantityFromItemName(ext.ItemName); extractedQty > 0 {
-			quantityInOriginalUnit = extractedQty
-		}
-	}
+	ext.Quantity, ext.Unit = convQty, convUnit
 
 	// Validasi stok cukup (pesan informatif). Pengurangan tetap atomik di tx.
 	if inv.StockQty < ext.Quantity {
@@ -522,110 +515,28 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 		return "", fmt.Errorf("kurangi stok: %w", err)
 	}
 
-	a.invCache.Delete(msg.ChatID) // invalidate cache karena stok berkurang
-
 	// Fetch updated inventory after transaction for accurate remaining stock
 	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatGoods(ctx, msg.ChatID, inv.GoodsID)
 	if err != nil {
-		// Fallback to calculation if fetch fails
 		remaining := inv.StockQty - ext.Quantity
 		return fmt.Sprintf(
-			"🔄 Pemakaian tercatat: %s -%g %s (%g %s dari stok). Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
-			ext.ItemName, ext.Quantity, ext.Unit, quantityInOriginalUnit, originalUnit, remaining, inv.Unit,
+			"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
+			ext.ItemName, ext.Quantity, ext.Unit, remaining, inv.Unit,
 		), nil
 	}
 
 	return fmt.Sprintf(
-		"🔄 Pemakaian tercatat: %s -%g %s (%g %s dari stok). Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
-		ext.ItemName, ext.Quantity, ext.Unit, quantityInOriginalUnit, originalUnit, updatedInv.StockQty, updatedInv.Unit,
+		"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
+		ext.ItemName, ext.Quantity, ext.Unit, updatedInv.StockQty, updatedInv.Unit,
 	), nil
 }
 
-// cachedInventory mengembalikan snapshot inventory chat dari cache (TTL 5m)
-// atau dari DB bila cache miss. Dipakai sebagai konteks LLM agar LLM dapat
-// meresolve nama barang (mis. "susu" → "susu uht" di inventory).
-func (a *transactionAgent) cachedInventory(ctx context.Context, chatID string) []domain.Inventory {
-	if cached, found := a.invCache.Get(chatID); found {
-		return cached.([]domain.Inventory)
+// goodsRejectError menerjemahkan error resolusi goods ke BusinessError yang
+// memandu user mendaftarkan barang (kebijakan master-first: no auto-create).
+func goodsRejectError(err error, itemName string) error {
+	if errors.Is(err, agent.ErrGoodsNotFound) {
+		return agent.NewBusinessError(fmt.Sprintf(
+			"Barang '%s' tidak ada di master goods. Daftarkan dulu: \"tambah barang %s satuan [satuan]\" (contoh: tambah barang %s satuan pcs)", itemName, itemName, itemName))
 	}
-	items, err := a.invRepo.WithTx(a.db).ListByChat(ctx, chatID)
-	if err != nil {
-		a.log.ErrorContext(ctx, "gagal load inventory untuk cache", "err", err)
-		return nil
-	}
-	a.invCache.Set(chatID, items, cache.DefaultExpiration)
-	return items
-}
-
-// extractKeywords mengambil keywords dari pesan user untuk inventory search.
-// Focus pada kata-kata yang kemungkinan adalah nama barang/produk.
-func (a *transactionAgent) extractKeywords(userMessage string) []string {
-	words := strings.Fields(strings.ToLower(userMessage))
-	keywords := []string{}
-
-	// Indonesian stopwords + action words yang tidak relevan untuk inventory search
-	stopwords := map[string]bool{
-		// Stopwords umum
-		"yang": true, "dan": true, "atau": true, "ada": true, "dari": true,
-		"ke": true, "di": true, "untuk": true, "dengan": true, "pada": true,
-		"adalah": true, "itu": true, "ini": true, "berapa": true, "sisa": true,
-		// Query words
-		"cek": true, "stok": true, "stock": true, "barang": true, "item": true,
-		"persediaan": true, "punya": true, "punyai": true, "milik": true,
-		// Action words (transactions)
-		"beli": true, "bayar": true, "ambil": true, "pakai": true, "terpakai": true,
-		"jual": true, "transfer": true, "masuk": true, "keluar": true,
-		// Numbers and quantities (biasanya bukan nama barang)
-		"rb": true, "ribu": true, "jt": true, "juta": true, "k": true, "pcs": true,
-	}
-
-	// Skip common query patterns yang jelas general
-	generalPatterns := []string{"barang saya", "apa aja", "apa saja", "semua", "list", "daftar", "inventaris"}
-	lowerMsg := strings.ToLower(userMessage)
-	for _, pattern := range generalPatterns {
-		if strings.Contains(lowerMsg, pattern) {
-			return []string{} // Return empty untuk trigger fallback ke full inventory
-		}
-	}
-
-	for _, word := range words {
-		// Skip stopwords, action words, dan kata pendek
-		if !stopwords[word] && len(word) > 2 && !strings.HasPrefix(word, "http") {
-			// Skip angka murni
-			if _, err := strconv.Atoi(word); err != nil {
-				keywords = append(keywords, word)
-			}
-		}
-	}
-
-	return keywords
-}
-
-// searchInventory mencari inventory items berdasarkan keywords dari pesan user.
-// Returns: relevant items (1-5 items) untuk efisiensi LLM tokens.
-func (a *transactionAgent) searchInventory(ctx context.Context, chatID, userMessage string) []domain.Inventory {
-	keywords := a.extractKeywords(userMessage)
-
-	// Kalau tidak ada keywords extracted atau general query, fallback ke full inventory
-	if len(keywords) == 0 {
-		a.log.DebugContext(ctx, "general query detected, using full inventory", "chat", chatID)
-		return a.cachedInventory(ctx, chatID)
-	}
-
-	// Cari dengan keyword pertama (paling relevant)
-	keyword := keywords[0]
-	items, err := a.invRepo.WithTx(a.db).SearchByName(ctx, chatID, keyword)
-	if err != nil {
-		a.log.ErrorContext(ctx, "search inventory error, fallback to full", "keyword", keyword, "err", err)
-		return a.cachedInventory(ctx, chatID)
-	}
-
-	// Kalau search tidak return hasil apa-apa, fallback ke full inventory
-	if len(items) == 0 {
-		a.log.DebugContext(ctx, "no search results, fallback to full inventory", "keyword", keyword)
-		return a.cachedInventory(ctx, chatID)
-	}
-
-	a.log.DebugContext(ctx, "search inventory success", "keyword", keyword, "found", len(items), "items", len(items))
-	return items
+	return fmt.Errorf("resolve goods: %w", err)
 }

@@ -100,8 +100,8 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		info, err := service.GetActiveCycleInfo(ctx, chatID, kopi, "")
 		require.NoError(t, err)
 		assert.Contains(t, info, "Kopi")
-		assert.Contains(t, info, "1 kg") // satuan beli user = kg → tampil dalam kg
-		assert.Contains(t, info, "kg/hari")
+		assert.Contains(t, info, "1 kg")    // satuan beli user
+		assert.Contains(t, info, "gr/hari") // rate dalam satuan tersimpan (verbatim)
 	})
 }
 
@@ -173,12 +173,8 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 
 				result, err := service.CalculateDailyConsumption(ctx, chatID, "Test Item", start, end, tc.purchaseQty, tc.purchaseUnit, tc.convFactor)
 				require.NoError(t, err)
-				// Rate tampil dalam satuan user: "kaleng" bukan base → gr; "kg" → kg.
-				wantUnit := "gr/hari"
-				if tc.purchaseUnit == "kg" {
-					wantUnit = "kg/hari"
-				}
-				assert.Contains(t, result, wantUnit)
+				// Rate tampil dalam satuan tersimpan apa adanya (tanpa konversi).
+				assert.Contains(t, result, "gr/hari")
 			})
 		}
 	})

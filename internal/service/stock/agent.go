@@ -95,7 +95,7 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 			}
 
 			if len(filteredItems) == 0 {
-				return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Tidak ada item '%s' di inventaris.", itemFilter), intentCost)
+				return a.replyUnknownItem(ctx, msg.ChatID, itemFilter, intentCost)
 			}
 
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
@@ -127,6 +127,35 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 	reply.WriteString("\n\n💡 Ketik 'stok [kategori]' untuk detail (contoh: 'stok minuman')")
 
 	return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, reply.String(), intentCost)
+}
+
+// uomOrPcs mengembalikan satuan barang, default "pcs" bila belum diatur.
+func uomOrPcs(uom string) string {
+	if strings.TrimSpace(uom) == "" {
+		return "pcs"
+	}
+	return uom
+}
+
+// replyUnknownItem menangani query stok yang tidak ketemu di inventory:
+// cek master goods dulu — barang terdaftar tapi belum pernah dibeli →
+// jawab "stok 0"; benar-benar asing → arahkan mendaftarkan ke master.
+func (a *stockAgent) replyUnknownItem(ctx context.Context, chatID, itemFilter string, intentCost float64) error {
+	goods, err := a.goodsRepo.WithTx(a.db).SearchByName(ctx, chatID, itemFilter, 5)
+	if err != nil {
+		a.log.ErrorContext(ctx, "gagal search goods", "err", err)
+		return agent.SendReplyWithCost(ctx, a.log, a.sender, chatID, "Maaf, gagal mengambil data stok.", intentCost)
+	}
+	if len(goods) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Stok saat ini (%s):\n", itemFilter)
+		for _, g := range goods {
+			fmt.Fprintf(&b, "- %s: 0 %s (terdaftar di master, belum pernah dibeli)\n", g.Name, uomOrPcs(g.Uom))
+		}
+		return agent.SendReplyWithCost(ctx, a.log, a.sender, chatID, b.String(), intentCost)
+	}
+	return agent.SendReplyWithCost(ctx, a.log, a.sender, chatID,
+		fmt.Sprintf("Barang '%s' tidak ada di inventaris maupun master goods. Daftarkan dulu: \"tambah barang %s satuan [satuan]\".", itemFilter, itemFilter), intentCost)
 }
 
 // lastPurchases mengambil pembelian (harga) terakhir tiap item dari

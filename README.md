@@ -11,9 +11,10 @@ A WhatsApp-based assistant for tracking personal expenses and inventory. Just ch
 - **🤖 LLM-Based Intelligence.** Smart routing via LLM intent classification — handles typos, variations, and natural language automatically. No rigid patterns required.
 - **Chat = Ledger.** Each chat (DM or group) is an independent ledger. Groups share one ledger among members; DMs are personal.
 - **Natural Language Processing.** Type `beli kopi 15rb`, `cek stock kecap`, atau `analisa konsumsi bulan ini` → LLM understands intent and extracts structured parameters automatically.
-- **📦 Goods Master (master-first).** Every item lives in a per-chat `goods` catalog — the single source of names, canonical units (uom), categories, and conversion factors. Transactions/inventory/consumption resolve by `goods_id`; unknown items are rejected with registration guidance (no auto-create, no hallucinated names).
+- **📦 Goods Master (master-first).** Every item lives in a per-chat `goods` catalog — the single source of names, canonical units (uom), categories, conversion factors, and the stock flag (`affects_stock`). Transactions/inventory/consumption resolve by `goods_id`; unknown items are rejected with registration guidance (no auto-create, no hallucinated names).
 - **⚖️ UOM from master, never from the LLM.** Conversion is defined once (`set 1 galon 15lt`) and applied everywhere: stock units, consumption cycles (stored verbatim — 15 lt, not 15000 ml), and usage conversion (`pakai 3lt` → 0.2 galon). No factor registered? The item simply lives in its stock unit (galon → galon, factor 1).
 - **🏷️ Canonical categories.** Category is fixed on the master row — LLM classification can never drift it. `tambah barang` without a category gets a keyword-based suggestion (correctable via `set kategori`).
+- **🚦 Stock flag from master.** Whether a purchase adds stock is decided once per item on the master (`affects_stock`), never per message by the LLM. Physical stored goods (`gas lpg`, `galon`) stock up; services/fuel (`listrik`, `bensin`) never do — correctable via `set stok [barang] ya|tidak`.
 - **💰 Real-Time Cost Tracking.** Every WhatsApp reply displays exact LLM cost. Two LLM hops max (intent + extraction), constant prompt size — no per-message catalog injection.
 - **Automatic Inventory Management.** Physical-goods expenses increase stock in the master's unit; consumption decreases it via master factors with batch tracking and daily-rate analytics.
 - **Consumption Cycle Tracking.** Per-batch usage from start to finish — auto-generated batch numbers, multi-batch support, history and rate in the master's conversion unit.
@@ -155,7 +156,7 @@ flowchart TD
     RG -- ambigu --> RC[🔢 pilih nomor<br/>(resume tanpa LLM hop)]
     RG -- ketemu --> J2[kategori & satuan stok<br/>dari master]
     J2 --> DB0 & DB1
-    J2 -- affects_stock --> DB2 & DB3
+    J2 -- "flag master affects_stock" --> DB2 & DB3
     I1 -- CONSUMPTION --> DB2 & DB3 & DB4
 
     H -- consumption --> I2[ConvertUsage via faktor master<br/>use / update / complete / list]
@@ -203,7 +204,7 @@ The system implements multiple optimization strategies to minimize LLM token usa
 Extraction prompts contain no catalog snapshot at all — the LLM copies item names verbatim from the message, and matching happens afterwards via indexed DB queries (`ResolveGoods`). Prompt size is **constant** regardless of how many items the chat has registered.
 
 #### **2. Lean Prompts**
-The transaction prompt carries no unit-conversion rules (master owns conversions), no consumption-analysis fields, and only 10 compact examples. The LLM never performs unit math.
+The transaction prompt carries no unit-conversion rules (master owns conversions), no consumption-analysis fields, no affects_stock rules (the master's stock flag decides), and only 9 compact examples. The LLM never performs unit math.
 
 #### **3. Category-Based Summarization (WhatsApp Display Optimization)**
 For general stock queries, the system provides category summaries instead of raw item lists:
@@ -272,7 +273,7 @@ The intent classifier evaluates messages top-down and stops at the first match:
 | 4 | `konsumsi` / `pemakaian` / `barang aktif` | `consumption` (info / list / history) | `"konsumsi susu"` |
 | 5 | `init` / `bantuan` / `info` | `init` / `help` / `info` | `"init dompetku"` |
 | 6 | `beli` / `bayar` / `jual` / money amount | `record_transaction` | `"beli kopi 15rb"` |
-| 7 | `master barang` / `tambah barang` / `set ...` | `goods` | `"set 1 galon 15lt"`, `"tambah barang beras satuan kg"` |
+| 7 | `master barang` / `tambah barang` / `set ...` | `goods` | `"set 1 galon 15lt"`, `"tambah barang beras satuan kg"`, `"set stok gas ya"` |
 | 8 | `stok` / `sisa` / `persediaan` | `get_stock` | `"stok kecap"` |
 | 9 | `pengeluaran` / `pemasukan` / `laporan` | `get_report` | `"ringkasan kemarin"` |
 | 10 | No match | `none` | `"halo"`, chitchat |
@@ -293,7 +294,7 @@ The intent classifier evaluates messages top-down and stops at the first match:
 
 **2. Transaction Extraction Prompt (`transactionSystemPrompt`)**
 - Lives in `internal/service/transaction/prompt.go` — the only other prompt actually sent to the LLM (2nd hop)
-- GROSIR vs KEMASAN naming, amount formats (`50rb`/`1.5jt`), dates — and NO unit-conversion rules: names and units are copied verbatim, the master owns all conversions
+- GROSIR vs KEMASAN naming, amount formats (`50rb`/`1.5jt`), dates — and NO unit-conversion or affects_stock rules: names and units are copied verbatim, the master owns all conversions and the stock flag
 
 **3. Service Handlers (per-domain agents)**
 - `handleInitAction()` - Ledger initialization (system)
@@ -898,6 +899,9 @@ A: Grab the Task ID (from `/dev/message` response, `X-Task-ID` header, or the fi
 docker logs <container> 2>&1 | grep <task_id>
 ```
 You'll see every step (intent → agent → persist → reply) with cost and duration, ending in a `task selesai` summary.
+
+**Q: How does the system decide whether a purchase adds stock?**
+A: Via the `affects_stock` flag on the goods master — not the LLM. `tambah barang` sets it from an explicit "non stok" mention or a service/fuel keyword heuristic (listrik/bensin/parkir → non-stock; gas LPG stays stocked), and you can flip it anytime with `set stok [barang] ya|tidak`. Purchases of stock-managed items update inventory; non-stock items are recorded as finance-only transactions.
 
 **Q: How does the consumption module handle different units?**
 A: Units come exclusively from the goods master. Register a factor once (`set 1 galon 15lt`) and `pakai galon air 3lt` converts to 0.2 galon via `ConvertUsage()`. Without a factor, the item simply lives in its stock unit (galon → galon, factor 1). Unknown units are rejected with a hint listing the accepted units.

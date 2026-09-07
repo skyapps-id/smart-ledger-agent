@@ -14,7 +14,7 @@ import (
 
 func TestStartUsageCountBasedFactor(t *testing.T) {
 	db := setupCompleteFlowTestDB(t)
-	svc := NewService(db, repository.NewConsumptionCycleRepository(db), slog.Default())
+	svc := NewService(repository.NewConsumptionCycleRepository(db), slog.Default())
 	ctx := context.Background()
 
 	t.Run("master: pampers 1 ball = 48 pcs", func(t *testing.T) {
@@ -24,8 +24,8 @@ func TestStartUsageCountBasedFactor(t *testing.T) {
 		assert.Equal(t, float64(48), cycle.ConversionFactor)
 		assert.Equal(t, float64(48), cycle.ConsumedQty)
 		assert.Equal(t, "pcs", cycle.ConsumedUnit)
-		assert.Equal(t, float64(1), cycle.PurchaseQty)
-		assert.Equal(t, "ball", cycle.PurchaseUnit)
+		assert.Equal(t, float64(1), cycle.InventoryQty)
+		assert.Equal(t, "ball", cycle.InventoryUnit)
 	})
 
 	t.Run("master: galon 15 lt tersimpan apa adanya (tanpa normalisasi ml)", func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestStartUsageCountBasedFactor(t *testing.T) {
 func TestStartUsageMasterFactor(t *testing.T) {
 	db := setupCompleteFlowTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
-	svc := NewService(db, cycleRepo, slog.Default())
+	svc := NewService(cycleRepo, slog.Default())
 
 	goods := &domain.Good{
 		Name: "air aqua galon", Uom: "galon",
@@ -63,8 +63,8 @@ func TestStartUsageMasterFactor(t *testing.T) {
 	cycle, err := svc.StartUsage(context.Background(), "c1", goods, 1, "galon", 1.0, "2026-05-01")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1.0, cycle.PurchaseQty)
-	assert.Equal(t, "galon", cycle.PurchaseUnit)
+	assert.Equal(t, 1.0, cycle.InventoryQty)
+	assert.Equal(t, "galon", cycle.InventoryUnit)
 	assert.Equal(t, 15.0, cycle.ConversionFactor, "1 galon = 15 lt, apa adanya dari master")
 	assert.Equal(t, 15.0, cycle.ConsumedQty)
 	assert.Equal(t, "lt", cycle.ConsumedUnit)

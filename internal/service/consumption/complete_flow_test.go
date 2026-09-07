@@ -57,7 +57,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 	logRepo := repository.NewStockLogRepository(db)
 
 	logger := slog.Default()
-	consumptionService := NewService(db, cycleRepo, logger)
+	consumptionService := NewService(cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-flow"
@@ -247,7 +247,7 @@ func TestStartUsageErrors(t *testing.T) {
 	db := setupCompleteFlowTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewService(db, cycleRepo, logger)
+	service := NewService(cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-errors"

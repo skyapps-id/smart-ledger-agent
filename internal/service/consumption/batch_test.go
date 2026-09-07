@@ -38,7 +38,7 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 	db := setupBatchTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewService(db, cycleRepo, logger)
+	service := NewService(cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-batch"
@@ -197,13 +197,13 @@ func TestConsumptionWithBatchNumber(t *testing.T) {
 	})
 }
 
-// TestStartUsageSemantics mengunci semantic satuan cycle: PurchaseQty dalam
+// TestStartUsageSemantics mengunci semantic satuan cycle: InventoryQty dalam
 // satuan inventory (pcs), ConversionFactor = faktor master apa adanya
 // (200 g per pcs), ConsumedQty dalam satuan konversi master (g).
 func TestStartUsageSemantics(t *testing.T) {
 	db := setupBatchTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
-	svc := NewService(db, cycleRepo, slog.Default())
+	svc := NewService(cycleRepo, slog.Default())
 
 	bmt := mustGood(t, db, "chat-uom", "susu bmt")
 	bmt.ConversionUom, bmt.FactorUom = "g", 200
@@ -212,8 +212,8 @@ func TestStartUsageSemantics(t *testing.T) {
 	cycle, err := svc.StartUsage(context.Background(), "chat-uom", bmt, 1, "pcs", 1.0, "2026-03-01")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1.0, cycle.PurchaseQty)        // satuan inventory
-	assert.Equal(t, "pcs", cycle.PurchaseUnit)     //
+	assert.Equal(t, 1.0, cycle.InventoryQty)       // satuan inventory
+	assert.Equal(t, "pcs", cycle.InventoryUnit)    //
 	assert.Equal(t, 200.0, cycle.ConversionFactor) // 200 g per pcs, dari master
 	assert.Equal(t, 200.0, cycle.ConsumedQty)      // satuan konversi master
 	assert.Equal(t, "g", cycle.ConsumedUnit)       //
@@ -224,7 +224,7 @@ func TestStartUsageSemantics(t *testing.T) {
 func TestListActiveByItemMultiBatch(t *testing.T) {
 	db := setupBatchTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
-	svc := NewService(db, cycleRepo, slog.Default())
+	svc := NewService(cycleRepo, slog.Default())
 	ctx := context.Background()
 
 	// Dua "pakai" berturut = dua batch aktif.

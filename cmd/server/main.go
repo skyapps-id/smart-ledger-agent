@@ -81,7 +81,7 @@ func main() {
 	// ── Sub-agents (spesialis domain) ──
 	// Semua wiring DI ada di sini (composition root): orchestrator tidak
 	// import package domain sama sekali, cukup menerima []agent.SubAgent.
-	consumptionService := consumption.NewService(db, consumptionCycleRepo, logger)
+	consumptionService := consumption.NewService(consumptionCycleRepo, logger)
 
 	// Konfirmasi pending (mis. pilihan batch bernomor): di-share antara
 	// consumption agent (mendaftarkan pilihan) dan orchestrator (resolve

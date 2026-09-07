@@ -251,16 +251,11 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 
 	case "history":
 		// Mendapatkan history konsumsi
-		limit := 10
-		if limitParam, ok := params["limit"].(float64); ok {
-			limit = int(limitParam)
-		}
-
 		if goods == nil {
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Belum ada data konsumsi untuk %s.", itemName), intentCost)
 		}
 
-		result, err = a.consumptionService.GetHistory(ctx, msg.ChatID, goods, limit)
+		result, err = a.consumptionService.GetHistory(ctx, msg.ChatID, goods)
 		if err != nil {
 			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, fmt.Sprintf("Gagal mengambil history: %v", err), intentCost)
 		}
@@ -457,7 +452,7 @@ func (a *consumptionAgent) confirmBatchIfNeeded(ctx context.Context, msg entity.
 		"consumption_action": actionType,
 		"item_name":          itemName,
 	}
-	for _, k := range []string{"usage_date", "usage_qty", "usage_unit", "limit"} {
+	for _, k := range []string{"usage_date", "usage_qty", "usage_unit"} {
 		if v, ok := params[k]; ok {
 			pendingParams[k] = v
 		}
@@ -475,7 +470,7 @@ func (a *consumptionAgent) confirmBatchIfNeeded(ctx context.Context, msg entity.
 	var b strings.Builder
 	fmt.Fprintf(&b, "⚠️ \"%s\" punya %d batch aktif — pilih nomornya ya:\n", itemName, len(cycles))
 	for i, c := range cycles {
-		fmt.Fprintf(&b, "%d. (%s) mulai %s, %g %s\n", i+1, c.BatchNumber, c.StartDate.Format("02/01"), c.PurchaseQty, c.PurchaseUnit)
+		fmt.Fprintf(&b, "%d. (%s) mulai %s, %g %s\n", i+1, c.BatchNumber, c.StartDate.Format("02/01"), c.InventoryQty, c.InventoryUnit)
 	}
 	fmt.Fprintf(&b, "\nBalas nomornya (1-%d), atau sebut batch lengkap.", len(cycles))
 	return true, agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, b.String(), intentCost)

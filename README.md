@@ -398,8 +398,8 @@ erDiagram
         varchar(64) batch_number "auto-generated"
         date start_date
         date end_date "nullable"
-        numeric purchase_qty
-        varchar(32) purchase_unit
+        numeric inventory_qty "qty pengambilan stok (satuan stok)"
+        varchar(32) inventory_unit "satuan stok"
         numeric conversion_factor "faktor master verbatim (mis. 15 lt per galon)"
         numeric consumed_qty
         varchar(32) consumed_unit "satuan master verbatim (mis. lt)"

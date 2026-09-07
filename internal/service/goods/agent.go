@@ -83,6 +83,8 @@ func (a *goodsAgent) handleGoodsAction(ctx context.Context, msg entity.IncomingM
 		return a.handleSetUom(ctx, msg, params, intentCost)
 	case "set_category":
 		return a.handleSetCategory(ctx, msg, params, intentCost)
+	case "set_stock":
+		return a.handleSetStock(ctx, msg, params, intentCost)
 	default:
 		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
 			"Aksi tidak dikenali. Ketik \"master barang\" untuk melihat katalog, \"set 1 [barang] [angka][satuan]\" untuk konversi, atau \"set kategori [barang] jadi [kategori]\".", intentCost)
@@ -136,6 +138,27 @@ func (a *goodsAgent) handleAdd(ctx context.Context, msg entity.IncomingMessage, 
 		}
 		factorInfo = fmt.Sprintf("\nKonversi: 1 %s = %g %s", unit, factorQty, factorUnit)
 	}
+	// Flag berstok: eksplisit dari user menang; tanpa itu, nama jasa/BBM
+	// → non-stok, selainnya berstok (default master). Bisa diubah kapan
+	// pun via "set stok [barang] ya|tidak".
+	affectsStock := true
+	affectsExplicit := false
+	if explicit, ok := params["affects_stock"].(bool); ok {
+		affectsStock = explicit
+		affectsExplicit = true
+	} else if looksLikeService(itemName) {
+		affectsStock = false
+	}
+	if err := a.goodsRepo.WithTx(a.db).UpdateAffectsStock(ctx, g.ID, affectsStock); err != nil {
+		a.log.ErrorContext(ctx, "gagal simpan flag stok", "err", err)
+	}
+	stockInfo := "\nStok: dicatat (barang fisik)"
+	if !affectsStock {
+		stockInfo = "\nStok: tidak dicatat (jasa/non-stok)"
+	}
+	if !affectsStock && !affectsExplicit {
+		stockInfo += " — salah? ketik: set stok " + g.Name + " ya"
+	}
 	// Kategori kosong → sarankan dari nama barang (keyword sederhana)
 	// supaya master tidak pernah tanpa kategori; user bisa koreksi kapan pun.
 	suggested := false
@@ -155,9 +178,39 @@ func (a *goodsAgent) handleAdd(ctx context.Context, msg entity.IncomingMessage, 
 	if !created {
 		verb = "diperbarui"
 	}
-	a.log.InfoContext(ctx, "goods add", "item", g.Name, "created", created, "uom", unit, "factor", factorQty, "factor_unit", factorUnit, "category", category)
+	a.log.InfoContext(ctx, "goods add", "item", g.Name, "created", created, "uom", unit, "factor", factorQty, "factor_unit", factorUnit, "category", category, "affects_stock", affectsStock)
 	return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
-		fmt.Sprintf("✅ Barang %s %s:\nNama   : %s\nSatuan : %s%s%s", g.Name, verb, g.Name, unit, factorInfo, categoryInfo), intentCost)
+		fmt.Sprintf("✅ Barang %s %s:\nNama   : %s\nSatuan : %s%s%s%s", g.Name, verb, g.Name, unit, factorInfo, categoryInfo, stockInfo), intentCost)
+}
+
+// handleSetStock mengubah flag barang berstok: "set stok gas ya" (pembelian
+// menambah stok) / "set stok bensin tidak" (jasa/non-stok). Keputusan stok
+// ada di master — ekstraksi LLM tidak lagi menentukan affects_stock.
+func (a *goodsAgent) handleSetStock(ctx context.Context, msg entity.IncomingMessage, params map[string]interface{}, intentCost float64) error {
+	itemName, _ := params["item_name"].(string)
+	affectsStock, ok := params["affects_stock"].(bool)
+	if itemName == "" || !ok {
+		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+			"Format: \"set stok [barang] ya|tidak\" (ya = pembelian menambah stok, tidak = jasa/non-stok). Contoh: set stok gas ya", intentCost)
+	}
+
+	g, stop, err := a.resolveGood(ctx, msg, params, itemName, intentCost)
+	if stop {
+		return err
+	}
+
+	if err := a.goodsRepo.WithTx(a.db).UpdateAffectsStock(ctx, g.ID, affectsStock); err != nil {
+		a.log.ErrorContext(ctx, "gagal ubah flag stok", "err", err)
+		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, "Maaf, gagal mengubah flag stok.", intentCost)
+	}
+
+	label := "ya — pembelian menambah stok"
+	if !affectsStock {
+		label = "tidak — jasa/non-stok (pembelian hanya tercatat keuangan)"
+	}
+	a.log.InfoContext(ctx, "flag stok diubah", "item", g.Name, "affects_stock", affectsStock)
+	return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+		fmt.Sprintf("✅ Kelola stok %s: %s.", g.Name, label), intentCost)
 }
 
 // handleSetCategory mengubah kategori kanonik barang — sekali di-set,
@@ -236,6 +289,11 @@ func (a *goodsAgent) handleInfo(ctx context.Context, msg entity.IncomingMessage,
 	fmt.Fprintf(&b, "Kode    : %s\n", g.Code)
 	fmt.Fprintf(&b, "Kategori: %s\n", categoryOrDefault(g.Category))
 	fmt.Fprintf(&b, "Satuan  : %s\n", uomOrDefault(g.Uom))
+	if g.AffectsStock {
+		fmt.Fprintf(&b, "Kelola Stok: ya (barang fisik)\n")
+	} else {
+		fmt.Fprintf(&b, "Kelola Stok: tidak (jasa/non-stok)\n")
+	}
 	if g.FactorUom > 0 && g.ConversionUom != "" {
 		fmt.Fprintf(&b, "Konversi: 1 %s = %g %s\n", uomOrDefault(g.Uom), g.FactorUom, g.ConversionUom)
 	} else {
@@ -405,6 +463,26 @@ func suggestCategory(name string) string {
 		}
 	}
 	return "LAINNYA"
+}
+
+// looksLikeService mendeteksi nama barang jasa/BBM/tagihan yang tidak
+// disimpan sebagai stok (dipakai langsung/habis sekali bayar). Murni
+// heuristic teks saat tambah barang tanpa keterangan stok — koreksi via
+// "set stok [barang] ya". Gas LPG tabung BUKAN service (disimpan & dipakai
+// bertahap) sehingga tetap berstok.
+func looksLikeService(name string) bool {
+	lower := strings.ToLower(name)
+	serviceWords := []string{
+		"listrik", "internet", "pulsa", "wifi", "token", "pdam", "indihome", "bpjs",
+		"gaji", "salary", "bensin", "bbm", "pertalite", "pertamax", "solar",
+		"parkir", "ojek", "ojol", "tol", "transport", "gojek", "grab",
+	}
+	for _, w := range serviceWords {
+		if strings.Contains(lower, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // categoryOrDefault mengembalikan kategori kanonik barang, atau "(belum

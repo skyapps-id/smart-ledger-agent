@@ -12,7 +12,7 @@ ACTIONS & PARAMS:
 1. init — aktivasi ledger ("init","mulai","daftar","aktivasi","start" di awal pesan). ledger_name? (mis. "init dompetku")
 2. help — panduan ("bantuan","bantu","panduan","menu","format","help","cara pakai","guna"). params {}
 3. info — identitas sesi/chat ("info","sesi","session","debug","identitas"). params {}
-4. goods — master barang & satuan ("tambah barang [x] satuan [u]","daftarkan barang","master barang","katalog barang","daftar barang","info barang [x]","set 1 [barang] [n][satuan]","ubah konversi [barang] jadi [n][satuan]","set satuan [barang] jadi [satuan]","set kategori [barang] jadi [kategori]"). goods_action=list|info|add|set_factor|set_uom|set_category; item_name?; factor_qty?; factor_unit?; unit?; category? ("set 1 galon 15lt" → item_name "galon", factor_qty 15, factor_unit "lt").
+4. goods — master barang & satuan ("tambah barang [x] satuan [u]","daftarkan barang","master barang","katalog barang","daftar barang","info barang [x]","set 1 [barang] [n][satuan]","ubah konversi [barang] jadi [n][satuan]","set satuan [barang] jadi [satuan]","set kategori [barang] jadi [kategori]","set stok [barang] ya|tidak","non stok","tanpa stok"). goods_action=list|info|add|set_factor|set_uom|set_category|set_stock; item_name?; factor_qty?; factor_unit?; unit?; category?; affects_stock? (bool; add: "non stok" → false; set_stock: ya→true, tidak→false) ("set 1 galon 15lt" → item_name "galon", factor_qty 15, factor_unit "lt").
 5. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]"). item_filter? ("stok kecap" → "kecap")
 6. get_report — laporan keuangan/pemakaian ("pengeluaran","pengeluaran apa aja","pemasukan","pendapatan","laporan","ringkasan","rekap","total","boros","cash flow","arus kas","sisa uang","sisa dana","sisa kas","uang saya").
    report_type=summary|income|expense|expense_by_item|consumption; period=today|yesterday|this_week|last_week|this_month|last_month|custom|all; item_filter?; from_date?,to_date? (YYYY-MM-DD; wajib saat period=custom; "01/08" → tahun berjalan).
@@ -56,6 +56,9 @@ CONTOH:
 "set 1 galon 15lt" → {"action":"goods","params":{"goods_action":"set_factor","item_name":"galon","factor_qty":15,"factor_unit":"lt"}}
 "ubah konversi galon jadi 19 liter" → {"action":"goods","params":{"goods_action":"set_factor","item_name":"galon","factor_qty":19,"factor_unit":"lt"}}
 "set satuan beras jadi kg" → {"action":"goods","params":{"goods_action":"set_uom","item_name":"beras","unit":"kg"}}
+"tambah barang bensin satuan liter non stok" → {"action":"goods","params":{"goods_action":"add","item_name":"bensin","unit":"liter","affects_stock":false}}
+"set stok gas ya" → {"action":"goods","params":{"goods_action":"set_stock","item_name":"gas","affects_stock":true}}
+"set stok listrik tidak" → {"action":"goods","params":{"goods_action":"set_stock","item_name":"listrik","affects_stock":false}}
 "pengeluaran hari ini berapa" → {"action":"get_report","params":{"report_type":"expense","period":"today"}}
 "total pemasukan bulan ini" → {"action":"get_report","params":{"report_type":"income","period":"this_month"}}
 "pengeluaran per item kemarin" → {"action":"get_report","params":{"report_type":"expense_by_item","period":"yesterday"}}

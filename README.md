@@ -352,6 +352,7 @@ erDiagram
         varchar(128) name "single source of item names"
         varchar(32) uom "canonical unit (galon, pcs...)"
         varchar(32) category "canonical category, fixed per item"
+        bool affects_stock "flag barang berstok (default) vs jasa/BBM"
         varchar(32) conversion_uom "1 uom = factor_uom conversion_uom"
         numeric(12,3) factor_uom "learned/curated conversion"
         timestamptz created_at
@@ -415,6 +416,7 @@ erDiagram
 - **Relation by id, not name.** `inventory`, `consumption_cycles`, and `transactions` reference `goods_id`; `transactions.item_name` is kept only as a denormalized display snapshot for reports.
 - **Check-first (no auto-create).** Transactions resolve items via `agent.ResolveGoods` (exact → LIKE → original-message filter); items not in the master are REJECTED with guidance to register first (`"tambah barang [x] satuan [u]"`). Explicit registration goes through `GoodsRepository.GetOrCreateByName` (case-insensitive, slug code, unique per `chat_id + code`).
 - **Canonical category.** `category` on the goods row wins over per-transaction LLM classification — once set (explicitly or seeded from the first purchase), it never drifts. `GetCategorySummary` reads it for stock overviews.
+- **Stock flag on the master.** `affects_stock` lives on the goods row — physical stored goods (`galon`, `gas lpg`) add stock on purchase; services/fuel (`listrik`, `bensin`) never do. The LLM no longer decides this per transaction; `tambah barang` applies a keyword heuristic (correctable via `set stok [barang] ya|tidak`).
 - **UOM conversion factors.** `uom` = canonical unit, `conversion_uom` + `factor_uom` = conversion registered explicitly by the chat's users (`set 1 galon 15lt`, or inline at `tambah barang galon satuan galon, 1 galon = 15lt`). Factors are stored on the chat's goods row, so subsequent usage in the same chat converts stably — prompts never invent conversion factors.
 - **Name resolution via DB query (no context injection).** LLM-facing contracts still use `item_name` strings and the LLM extracts names verbatim; matching happens post-extraction via `agent.ResolveGoods` (exact → LIKE → original-message filter) — zero extra prompt tokens.
 
@@ -512,6 +514,9 @@ info barang galon air                                   # detail + stok
 set 1 galon air 15lt                                    # ubah faktor konversi
 set satuan beras jadi kg                                # ubah satuan kanonik
 set kategori galon air jadi MINUMAN                     # kategori permanen
+set stok gas lpg 3kg ya                                 # pembelian menambah stok
+set stok bensin tidak                                   # jasa/BBM: hanya catat keuangan
+tambah barang bensin satuan liter non stok              # daftar langsung non-stok
 ```
 
 ### Transaction Recording (items must exist in the master)

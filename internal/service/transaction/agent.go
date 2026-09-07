@@ -193,7 +193,8 @@ func (a *transactionAgent) confirmGoodsChoice(ctx context.Context, msg entity.In
 	return agent.FormatGoodsChoice(msg.Text, amb), nil
 }
 
-// handleExpense: catat pengeluaran. Hanya tambah stok bila affects_stock=true (RFC §7.1).
+// handleExpense: catat pengeluaran. Hanya tambah stok bila barang ber-flag
+// affects_stock di master goods (keputusan master, bukan LLM — RFC §7.1).
 func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.IncomingMessage, ext domain.Extraction, forcedItem string) (string, error) {
 	if forcedItem != "" {
 		ext.ItemName = forcedItem
@@ -223,8 +224,9 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 	var txnDate time.Time
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
-		// Skip financial transaction creation if amount is 0 but affects stock (inventory-only update)
-		if ext.Amount == 0 && ext.AffectsStock {
+		// Skip financial transaction creation if amount is 0 but item is
+		// stock-managed per master flag (inventory-only update).
+		if ext.Amount == 0 && goods.AffectsStock {
 			upserted, err := a.invRepo.WithTx(tx).AddStock(ctx, msg.ChatID, goods.ID, ext.Quantity, stockUnit)
 			if err != nil {
 				return fmt.Errorf("tambah stok: %w", err)
@@ -274,8 +276,9 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByGoods(ctx, msg.ChatID, goods.ID, txn.ID, txnDate)
 		}
 
-		// Lewati inventaris bila pengeluaran bukan barang stok (jasa/utilitas/dll).
-		if !ext.AffectsStock {
+		// Lewati inventaris bila barang non-stok di master (jasa/utilitas/
+		// BBM) — flag affects_stock di goods adalah penentu tunggalnya.
+		if !goods.AffectsStock {
 			return nil
 		}
 

@@ -344,3 +344,77 @@ func TestSuggestCategory(t *testing.T) {
 	assert.Equal(t, "TRANSPORT", suggestCategory("Bensin Pertalite"))
 	assert.Equal(t, "LAINNYA", suggestCategory("ongkos ketik"))
 }
+
+// TestGoodsAddServiceDefaultsNonStock: nama jasa/BBM tanpa keterangan stok
+// → flag affects_stock false (heuristik) + hint koreksi di reply.
+func TestGoodsAddServiceDefaultsNonStock(t *testing.T) {
+	ag, _, senderMock, _ := setupGoodsAgentTest(t)
+	ctx := context.Background()
+
+	err := ag.Handle(ctx, agent.Request{
+		Message: incoming("tambah barang listrik satuan kwh"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "add", "item_name": "listrik", "unit": "kwh",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, senderMock.msgs[0], "Stok: tidak dicatat")
+	assert.Contains(t, senderMock.msgs[0], "set stok listrik ya")
+
+	g, err := ag.goodsRepo.GetByName(ctx, "c1", "listrik")
+	require.NoError(t, err)
+	assert.False(t, g.AffectsStock)
+}
+
+// TestGoodsAddPhysicalDefaultsStock: barang fisik (gas LPG tabung) tetap
+// berstok meski kategori LAINNYA — jasa/BBM saja yang non-stok.
+func TestGoodsAddPhysicalDefaultsStock(t *testing.T) {
+	ag, _, senderMock, _ := setupGoodsAgentTest(t)
+	ctx := context.Background()
+
+	err := ag.Handle(ctx, agent.Request{
+		Message: incoming("tambah barang gas lpg 3kg satuan tbg"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "add", "item_name": "gas lpg 3kg", "unit": "tbg",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, senderMock.msgs[0], "Stok: dicatat (barang fisik)")
+
+	g, err := ag.goodsRepo.GetByName(ctx, "c1", "gas lpg 3kg")
+	require.NoError(t, err)
+	assert.True(t, g.AffectsStock)
+}
+
+// TestGoodsSetStock: "set stok [barang] ya|tidak" mengubah flag master.
+func TestGoodsSetStock(t *testing.T) {
+	ag, _, senderMock, _ := setupGoodsAgentTest(t)
+	ctx := context.Background()
+
+	_, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "bensin mobil", "ltr")
+	require.NoError(t, err)
+
+	err = ag.Handle(ctx, agent.Request{
+		Message: incoming("set stok bensin mobil tidak"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "set_stock", "item_name": "bensin mobil", "affects_stock": false,
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, senderMock.msgs[0], "tidak — jasa/non-stok")
+
+	g, err := ag.goodsRepo.GetByName(ctx, "c1", "bensin mobil")
+	require.NoError(t, err)
+	assert.False(t, g.AffectsStock)
+
+	err = ag.Handle(ctx, agent.Request{
+		Message: incoming("set stok bensin mobil ya"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "set_stock", "item_name": "bensin mobil", "affects_stock": true,
+		}},
+	})
+	require.NoError(t, err)
+	g, err = ag.goodsRepo.GetByName(ctx, "c1", "bensin mobil")
+	require.NoError(t, err)
+	assert.True(t, g.AffectsStock)
+}

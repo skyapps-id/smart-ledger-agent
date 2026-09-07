@@ -112,7 +112,11 @@ type Good struct {
 	Uom    string `gorm:"size:32" json:"uom"`
 	// Category tetap (kanonik) barang — sekali didefinisikan di master,
 	// transaksi berikutnya TIDAK bisa menggesernya (stabil untuk laporan).
-	Category      string    `gorm:"size:32" json:"category"`
+	Category string `gorm:"size:32" json:"category"`
+	// AffectsStock menentukan apakah pembelian barang ini menambah stok
+	// (barang fisik yang disimpan) atau tidak (jasa/BBM/tagihan). Keputusan
+	// ada di master — LLM tidak menentukan ini per transaksi.
+	AffectsStock  bool      `gorm:"default:true" json:"affects_stock"`
 	ConversionUom string    `gorm:"size:32" json:"conversion_uom"`
 	FactorUom     float64   `gorm:"type:numeric(12,3)" json:"factor_uom"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -122,7 +126,8 @@ type Good struct {
 func (Good) TableName() string { return "goods" }
 
 // Extraction adalah contract JSON yang dikembalikan oleh LLM.
-// Sesuai RFC §5.1 dan §6.1.
+// Sesuai RFC §5.1 dan §6.1. affects_stock TIDAK ada di sini — barang
+// berstok atau bukan ditentukan flag affects_stock di master goods.
 type Extraction struct {
 	Type            ExtractionType `json:"type"`
 	Category        string         `json:"category"`
@@ -130,7 +135,6 @@ type Extraction struct {
 	Quantity        float64        `json:"quantity"`
 	Unit            string         `json:"unit"`
 	Amount          float64        `json:"amount"`
-	AffectsStock    bool           `json:"affects_stock"`
 	Notes           string         `json:"notes"`
 	TransactionDate string         `json:"transaction_date,omitempty"` // format: "YYYY-MM-DD" atau kosong untuk hari ini
 }
@@ -163,10 +167,6 @@ func (e *Extraction) Normalise() {
 	}
 	if e.Type == ExtractionConsumption {
 		e.Amount = 0
-	}
-	// Hanya EXPENSE yang berpotensi menambah stok.
-	if e.Type != ExtractionExpense {
-		e.AffectsStock = false
 	}
 }
 

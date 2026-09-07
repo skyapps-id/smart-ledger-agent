@@ -35,6 +35,9 @@ type GoodsRepository interface {
 	UpdateUom(ctx context.Context, id int64, uom string) error
 	// UpdateCategory mengubah kategori kanonik barang.
 	UpdateCategory(ctx context.Context, id int64, category string) error
+	// UpdateAffectsStock mengubah flag barang berstok (pembelian menambah
+	// stok) atau non-stok (jasa/BBM/tagihan).
+	UpdateAffectsStock(ctx context.Context, id int64, affectsStock bool) error
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -194,4 +197,11 @@ func (r *goodsRepo) UpdateCategory(ctx context.Context, id int64, category strin
 	return r.db.WithContext(ctx).Model(&domain.Good{}).
 		Where("id = ?", id).
 		Update("category", category).Error
+}
+
+// UpdateAffectsStock mengubah flag barang berstok/non-stok.
+func (r *goodsRepo) UpdateAffectsStock(ctx context.Context, id int64, affectsStock bool) error {
+	return r.db.WithContext(ctx).Model(&domain.Good{}).
+		Where("id = ?", id).
+		Update("affects_stock", affectsStock).Error
 }

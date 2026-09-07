@@ -65,13 +65,12 @@ func setupTxnAgentTest(t *testing.T, ext domain.Extraction) (*transactionAgent, 
 // (galon), bukan dari ekstraksi LLM (default "pcs") — master-first.
 func TestExpenseStockUnitFromMaster(t *testing.T) {
 	ag, _, senderMock := setupTxnAgentTest(t, domain.Extraction{
-		Type:         domain.ExtractionExpense,
-		Category:     "MINUMAN",
-		ItemName:     "air aqua galon",
-		Quantity:     1,
-		Unit:         "pcs", // LLM default — HARUS kalah dari master
-		Amount:       0,
-		AffectsStock: true,
+		Type:     domain.ExtractionExpense,
+		Category: "MINUMAN",
+		ItemName: "air aqua galon",
+		Quantity: 1,
+		Unit:     "pcs", // LLM default — HARUS kalah dari master
+		Amount:   0,
 	})
 	ctx := context.Background()
 
@@ -92,4 +91,36 @@ func TestExpenseStockUnitFromMaster(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "galon", inv.Unit, "unit inventory harus dari master, bukan ekstraksi LLM")
 	assert.Equal(t, float64(1), inv.StockQty)
+}
+
+// TestExpenseNonStockMasterSkipsInventory: flag affects_stock=false di
+// master goods (jasa/BBM) → pembelian hanya tercatat keuangan, TANPA row
+// inventory — keputusan dari master, bukan dari ekstraksi LLM.
+func TestExpenseNonStockMasterSkipsInventory(t *testing.T) {
+	ag, _, senderMock := setupTxnAgentTest(t, domain.Extraction{
+		Type:     domain.ExtractionExpense,
+		Category: "TRANSPORT",
+		ItemName: "bensin mobil",
+		Quantity: 1,
+		Unit:     "ltr",
+		Amount:   50000,
+	})
+	ctx := context.Background()
+
+	g, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "bensin mobil", "ltr")
+	require.NoError(t, err)
+	require.NoError(t, ag.goodsRepo.UpdateAffectsStock(ctx, g.ID, false))
+
+	err = ag.Handle(ctx, agent.Request{
+		Message: entity.IncomingMessage{ChatID: "c1", Text: "beli bensin 50rb"},
+		Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+		Action:  domain.ServiceAction{Action: domain.ActionRecordTransaction},
+	})
+	require.NoError(t, err)
+	require.Len(t, senderMock.msgs, 1)
+	assert.Contains(t, senderMock.msgs[0], "Pengeluaran tercatat")
+	assert.NotContains(t, senderMock.msgs[0], "Stok saat ini")
+
+	_, err = ag.invRepo.GetByChatGoods(ctx, "c1", g.ID)
+	assert.Error(t, err, "barang non-stok tidak boleh punya row inventory")
 }

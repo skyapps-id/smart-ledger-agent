@@ -152,8 +152,8 @@ flowchart TD
     end
 
     I1 -- "INCOME / EXPENSE" --> RG{agent.ResolveGoods<br/>exact → LIKE → msg-filter}
-    RG -- "tidak ada" --> RJ[❌ reject: "daftarkan dulu<br/>(tambah barang ...)"]
-    RG -- ambigu --> RC[🔢 pilih nomor<br/>(resume tanpa LLM hop)]
+    RG -- "tidak ada" --> RJ["❌ reject: daftarkan dulu<br/>(tambah barang ...)"]
+    RG -- ambigu --> RC["🔢 pilih nomor<br/>(resume tanpa LLM hop)"]
     RG -- ketemu --> J2[kategori & satuan stok<br/>dari master]
     J2 --> DB0 & DB1
     J2 -- "flag master affects_stock" --> DB2 & DB3
@@ -165,7 +165,7 @@ flowchart TD
     H -- goods --> I6[Master ops: add / list / info<br/>set_factor / set_uom / set_category]
     I6 --> DB0
 
-    H -- get_stock --> I3[Category Summary<br/>(kategori master) / search]
+    H -- get_stock --> I3["Category Summary<br/>(kategori master) / search"]
     I3 --> DB2
     H -- get_report --> I4[Aggregate transactions]
     I4 --> DB1

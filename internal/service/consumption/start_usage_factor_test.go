@@ -17,8 +17,9 @@ func TestStartUsageCountBasedFactor(t *testing.T) {
 	svc := NewService(db, repository.NewConsumptionCycleRepository(db), slog.Default())
 	ctx := context.Background()
 
-	t.Run("pampers 1 ball = 48 pcs", func(t *testing.T) {
-		cycle, err := svc.StartUsage(ctx, "c1", &domain.Good{Name: "pampers mamypoko 48"}, 1, "ball", 1, "2026-05-01")
+	t.Run("master: pampers 1 ball = 48 pcs", func(t *testing.T) {
+		g := &domain.Good{Name: "pampers mamypoko", Uom: "ball", ConversionUom: "pcs", FactorUom: 48}
+		cycle, err := svc.StartUsage(ctx, "c1", g, 1, "ball", 1, "2026-05-01")
 		require.NoError(t, err)
 		assert.Equal(t, float64(48), cycle.ConversionFactor)
 		assert.Equal(t, float64(48), cycle.ConsumedQty)
@@ -27,19 +28,44 @@ func TestStartUsageCountBasedFactor(t *testing.T) {
 		assert.Equal(t, "ball", cycle.PurchaseUnit)
 	})
 
-	t.Run("galon 15lt = 15000 ml", func(t *testing.T) {
-		cycle, err := svc.StartUsage(ctx, "c1", &domain.Good{Name: "le minerale galon 15lt"}, 1, "galon", 1, "2026-05-01")
+	t.Run("master: galon 15 lt tersimpan apa adanya (tanpa normalisasi ml)", func(t *testing.T) {
+		g := &domain.Good{Name: "le minerale galon", Uom: "galon", ConversionUom: "lt", FactorUom: 15}
+		cycle, err := svc.StartUsage(ctx, "c1", g, 1, "galon", 1, "2026-05-01")
 		require.NoError(t, err)
-		assert.Equal(t, float64(15000), cycle.ConversionFactor)
-		assert.Equal(t, float64(15000), cycle.ConsumedQty)
-		assert.Equal(t, "ml", cycle.ConsumedUnit)
+		assert.Equal(t, float64(15), cycle.ConversionFactor)
+		assert.Equal(t, float64(15), cycle.ConsumedQty)
+		assert.Equal(t, "lt", cycle.ConsumedUnit)
 	})
 
-	t.Run("susu 200g tetap 200 gr", func(t *testing.T) {
-		cycle, err := svc.StartUsage(ctx, "c1", &domain.Good{Name: "susu bmt 200g"}, 1, "pcs", 1, "2026-05-01")
+	t.Run("tanpa master: pakai param caller apa adanya", func(t *testing.T) {
+		cycle, err := svc.StartUsage(ctx, "c1", &domain.Good{Name: "susu bmt"}, 1, "pcs", 200, "2026-05-01")
 		require.NoError(t, err)
 		assert.Equal(t, float64(200), cycle.ConversionFactor)
 		assert.Equal(t, float64(200), cycle.ConsumedQty)
-		assert.Equal(t, "gr", cycle.ConsumedUnit)
 	})
+	if false {
+		_ = ctx
+	}
+}
+
+// TestStartUsageMasterFactor: faktor resmi di master goods MENANG atas nama
+// barang & fallback param, dan tersimpan APA ADANYA — "air aqua galon" +
+// master 1 galon = 15 lt → factor 15, unit "lt" (tanpa normalisasi ml).
+func TestStartUsageMasterFactor(t *testing.T) {
+	db := setupCompleteFlowTestDB(t)
+	cycleRepo := repository.NewConsumptionCycleRepository(db)
+	svc := NewService(db, cycleRepo, slog.Default())
+
+	goods := &domain.Good{
+		Name: "air aqua galon", Uom: "galon",
+		ConversionUom: "lt", FactorUom: 15,
+	}
+	cycle, err := svc.StartUsage(context.Background(), "c1", goods, 1, "galon", 1.0, "2026-05-01")
+	require.NoError(t, err)
+
+	assert.Equal(t, 1.0, cycle.PurchaseQty)
+	assert.Equal(t, "galon", cycle.PurchaseUnit)
+	assert.Equal(t, 15.0, cycle.ConversionFactor, "1 galon = 15 lt, apa adanya dari master")
+	assert.Equal(t, 15.0, cycle.ConsumedQty)
+	assert.Equal(t, "lt", cycle.ConsumedUnit)
 }

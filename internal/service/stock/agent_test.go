@@ -2,11 +2,21 @@ package stock
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
 	"smart-ledger-agent/internal/domain"
+	"smart-ledger-agent/internal/entity"
+	"smart-ledger-agent/internal/repository"
+	"smart-ledger-agent/internal/sender"
+	"smart-ledger-agent/internal/service/agent"
 )
 
 // MockIntentExtractor untuk testing
@@ -118,4 +128,75 @@ func TestFormatStockWithLastPurchase(t *testing.T) {
 	if strings.Contains(response, "beli terakhir") {
 		t.Errorf("tanpa lastPurchases tidak boleh ada info harga: %s", response)
 	}
+}
+
+func stockIncoming(text string) entity.IncomingMessage {
+	return entity.IncomingMessage{ChatID: "c1", Text: text}
+}
+
+type stockMockSender struct{ msgs []string }
+
+func (s *stockMockSender) Enqueue(msg sender.Message) bool {
+	s.msgs = append(s.msgs, msg.Text)
+	return true
+}
+
+func setupStockAgentTest(t *testing.T) (*stockAgent, *gorm.DB, *stockMockSender) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&domain.Good{}, &domain.Inventory{}, &domain.Transaction{}))
+	senderMock := &stockMockSender{}
+	ag := &stockAgent{
+		db:        db,
+		goodsRepo: repository.NewGoodsRepository(db),
+		invRepo:   repository.NewInventoryRepository(db),
+		txnRepo:   repository.NewTransactionRepository(db),
+		sender:    senderMock,
+		log:       slog.Default(),
+	}
+	return ag, db, senderMock
+}
+
+func TestGetStockMasterItemWithoutPurchase(t *testing.T) {
+	ag, db, senderMock := setupStockAgentTest(t)
+	ctx := context.Background()
+
+	// Terdaftar di master, belum pernah dibeli → stok 0, bukan "tidak ada".
+	_, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "galon air", "galon")
+	require.NoError(t, err)
+	// Barang lain yang SUDAH dibeli.
+	beras, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "beras 5kg", "kg")
+	require.NoError(t, err)
+	_, err = ag.invRepo.AddStock(ctx, "c1", beras.ID, 5, "kg")
+	require.NoError(t, err)
+	_ = db
+
+	err = ag.Handle(ctx, agent.Request{
+		Message: stockIncoming("stok galon"),
+		Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+		Action: domain.ServiceAction{Action: domain.ActionGetStock, Params: map[string]interface{}{
+			"item_filter": "galon",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, senderMock.msgs, 1)
+	assert.Contains(t, senderMock.msgs[0], "galon air: 0 galon")
+	assert.Contains(t, senderMock.msgs[0], "belum pernah dibeli")
+}
+
+func TestGetStockUnknownItem(t *testing.T) {
+	ag, _, senderMock := setupStockAgentTest(t)
+
+	err := ag.Handle(context.Background(), agent.Request{
+		Message: stockIncoming("stok kecap"),
+		Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+		Action: domain.ServiceAction{Action: domain.ActionGetStock, Params: map[string]interface{}{
+			"item_filter": "kecap",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, senderMock.msgs, 1)
+	assert.Contains(t, senderMock.msgs[0], "tidak ada di inventaris maupun master")
+	assert.Contains(t, senderMock.msgs[0], "tambah barang kecap")
 }

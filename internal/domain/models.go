@@ -95,16 +95,21 @@ type StockLog struct {
 
 func (StockLog) TableName() string { return "stock_logs" }
 
-// Good adalah master katalog barang GLOBAL (bersama lintas chat/ledger).
+// Good adalah master katalog barang PER CHAT (ledger) — nama barang &
+// faktor satuan terisolasi antar chat, konsisten dengan isolasi ledger.
 // Uom = satuan kanonik barang (mis. "galon"); ConversionUom + FactorUom =
 // faktor konversi resmi (1 Uom = FactorUom ConversionUom, mis. 19 lt).
 // Master ini sumber kebenaran satuan: prompt LLM dilarang mengarang UOM /
 // faktor konversi dan wajib merujuk ke sini.
 type Good struct {
-	ID            int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Code          string    `gorm:"size:32;uniqueIndex" json:"code"`
-	Name          string    `gorm:"size:128;index" json:"name"`
-	Uom           string    `gorm:"size:32" json:"uom"`
+	ID     int64  `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID string `gorm:"size:64;uniqueIndex:idx_goods_chat_code;index:idx_goods_chat_name" json:"chat_id"`
+	Code   string `gorm:"size:32;uniqueIndex:idx_goods_chat_code" json:"code"`
+	Name   string `gorm:"size:128;index:idx_goods_chat_name" json:"name"`
+	Uom    string `gorm:"size:32" json:"uom"`
+	// Category tetap (kanonik) barang — sekali didefinisikan di master,
+	// transaksi berikutnya TIDAK bisa menggesernya (stabil untuk laporan).
+	Category      string    `gorm:"size:32" json:"category"`
 	ConversionUom string    `gorm:"size:32" json:"conversion_uom"`
 	FactorUom     float64   `gorm:"type:numeric(12,3)" json:"factor_uom"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -116,17 +121,15 @@ func (Good) TableName() string { return "goods" }
 // Extraction adalah contract JSON yang dikembalikan oleh LLM.
 // Sesuai RFC §5.1 dan §6.1.
 type Extraction struct {
-	Type             ExtractionType `json:"type"`
-	Category         string         `json:"category"`
-	ItemName         string         `json:"item_name"`
-	Quantity         float64        `json:"quantity"`
-	Unit             string         `json:"unit"`
-	Amount           float64        `json:"amount"`
-	AffectsStock     bool           `json:"affects_stock"`
-	Notes            string         `json:"notes"`
-	TransactionDate  string         `json:"transaction_date,omitempty"`  // format: "YYYY-MM-DD" atau kosong untuk hari ini
-	ConsumptionDate  string         `json:"consumption_date,omitempty"`  // format: "YYYY-MM-DD" untuk tanggal habis, bila ada
-	TotalConsumption float64        `json:"total_consumption,omitempty"` // jumlah total yang benar-benar habis dipakai (dalam unit yang sama)
+	Type            ExtractionType `json:"type"`
+	Category        string         `json:"category"`
+	ItemName        string         `json:"item_name"`
+	Quantity        float64        `json:"quantity"`
+	Unit            string         `json:"unit"`
+	Amount          float64        `json:"amount"`
+	AffectsStock    bool           `json:"affects_stock"`
+	Notes           string         `json:"notes"`
+	TransactionDate string         `json:"transaction_date,omitempty"` // format: "YYYY-MM-DD" atau kosong untuk hari ini
 }
 
 type ExtractionType string
@@ -170,6 +173,7 @@ const (
 	ActionGetStock          = "get_stock"
 	ActionGetReport         = "get_report"
 	ActionConsumption       = "consumption"
+	ActionGoods             = "goods"
 	ActionInit              = "init"
 	ActionHelp              = "help"
 	ActionInfo              = "info"

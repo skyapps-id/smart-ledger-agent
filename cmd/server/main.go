@@ -11,8 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/patrickmn/go-cache"
-
 	"smart-ledger-agent/internal/config"
 	"smart-ledger-agent/internal/database"
 	"smart-ledger-agent/internal/handler"
@@ -22,6 +20,7 @@ import (
 	"smart-ledger-agent/internal/sender"
 	"smart-ledger-agent/internal/service/agent"
 	"smart-ledger-agent/internal/service/consumption"
+	"smart-ledger-agent/internal/service/goods"
 	"smart-ledger-agent/internal/service/orchestrator"
 	"smart-ledger-agent/internal/service/report"
 	"smart-ledger-agent/internal/service/stock"
@@ -59,7 +58,6 @@ func main() {
 	// ── External clients ──
 	extractor := llm.New(cfg.LLM)
 	intentExtractor := llm.NewIntentExtractor(cfg.LLM)
-	conversionReasoner := llm.NewConversionReasoner(cfg.LLM)
 	wahaSender := waha.New(cfg.WAHA)
 
 	// ── WAHA Sender Worker (Sequential dengan Rate Limiting) ──
@@ -84,9 +82,6 @@ func main() {
 	// Semua wiring DI ada di sini (composition root): orchestrator tidak
 	// import package domain sama sekali, cukup menerima []agent.SubAgent.
 	consumptionService := consumption.NewService(db, consumptionCycleRepo, logger)
-	// invCache di-share antar agent: diisi transactionAgent (snapshot konteks
-	// LLM), di-invalidate siapa pun yang mengubah stok (transaksi/pemakaian).
-	invCache := cache.New(5*time.Minute, 10*time.Minute)
 
 	// Konfirmasi pending (mis. pilihan batch bernomor): di-share antara
 	// consumption agent (mendaftarkan pilihan) dan orchestrator (resolve
@@ -94,9 +89,10 @@ func main() {
 	pendingConfirms := agent.NewPendingConfirms()
 
 	agents := []agent.SubAgent{
-		transaction.NewAgent(db, txnRepo, goodsRepo, invRepo, logRepo, consumptionService, extractor, invCache, pendingConfirms, replySender, logger),
+		transaction.NewAgent(db, txnRepo, goodsRepo, invRepo, logRepo, consumptionService, extractor, pendingConfirms, replySender, logger),
 		stock.NewAgent(db, goodsRepo, invRepo, txnRepo, replySender, logger),
-		consumption.NewAgentWithReasoner(db, goodsRepo, invRepo, logRepo, consumptionService, invCache, pendingConfirms, conversionReasoner, replySender, logger),
+		consumption.NewAgent(db, goodsRepo, invRepo, logRepo, consumptionService, pendingConfirms, replySender, logger),
+		goods.NewAgent(db, goodsRepo, invRepo, pendingConfirms, replySender, logger),
 		report.NewAgent(db, txnRepo, logRepo, replySender, logger),
 		system.NewAgent(db, chatRepo, txnRepo, replySender, logger),
 	}

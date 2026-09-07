@@ -23,7 +23,7 @@ func setupTxnTestDB(t *testing.T) *gorm.DB {
 // seedTxnGood membuat master goods untuk relasi transaksi (goods_id).
 func seedTxnGood(t *testing.T, db *gorm.DB, code, name string) *domain.Good {
 	t.Helper()
-	g := &domain.Good{Code: code, Name: name}
+	g := &domain.Good{ChatID: "c1", Code: code, Name: name}
 	require.NoError(t, db.Create(g).Error)
 	return g
 }

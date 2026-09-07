@@ -30,27 +30,12 @@ type Usage struct {
 // Extractor abstraksi klien ekstraksi LLM. System prompt dibawa caller
 // (agent pemiliknya), bukan di-hardcode di transport layer.
 type Extractor interface {
-	Extract(ctx context.Context, systemPrompt, rawText, inventoryContext, sessionID string) (domain.Extraction, Usage, error)
+	Extract(ctx context.Context, systemPrompt, rawText, sessionID string) (domain.Extraction, Usage, error)
 }
 
 // IntentExtractor abstraksi untuk intent classification menggunakan LLM.
 type IntentExtractor interface {
 	ClassifyIntent(ctx context.Context, systemPrompt, rawText, sessionID string) (domain.ServiceAction, Usage, error)
-}
-
-// ConversionReasoning hasil penalaran konversi satuan oleh LLM.
-type ConversionReasoning struct {
-	Action      string  `json:"action"`       // "convert" | "ask" | "reject"
-	ContentQty  float64 `json:"content_qty"`  // isi per kemasan (hanya bila eksplisit)
-	ContentUnit string  `json:"content_unit"` // lt/ml/gr/kg/pcs
-	Question    string  `json:"question"`     // pertanyaan natural untuk user (action=ask)
-}
-
-// ConversionReasoner abstraksi penalaran konversi satuan kemasan via LLM:
-// dipakai hanya di jalur ambigu (faktor tidak diketahui kode) — kode tetap
-// memegang matematika & penyimpanan.
-type ConversionReasoner interface {
-	ReasonConversion(ctx context.Context, systemPrompt, rawText, sessionID string) (ConversionReasoning, Usage, error)
 }
 
 // New membuat klien OpenRouter dengan HTTP client default.
@@ -65,16 +50,6 @@ func New(cfg config.LLMConfig) Extractor {
 
 // NewIntentExtractor membuat klien OpenRouter untuk intent classification.
 func NewIntentExtractor(cfg config.LLMConfig) IntentExtractor {
-	return &openRouterClient{
-		cfg: cfg,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
-}
-
-// NewConversionReasoner membuat klien OpenRouter untuk penalaran konversi.
-func NewConversionReasoner(cfg config.LLMConfig) ConversionReasoner {
 	return &openRouterClient{
 		cfg: cfg,
 		httpClient: &http.Client{
@@ -198,14 +173,10 @@ func calculateCost(promptTokens, completionTokens, cachedTokens int) float64 {
 }
 
 // Extract mengirim teks ke LLM dan mengembalikan entitas terstruktur.
-// systemPrompt adalah prompt milik agent pemanggil; inventoryContext adalah
-// snapshot inventory chat (hasil BuildInventoryPrompt) yang di-inject sebagai
-// konteks tambahan ke system prompt.
-func (c *openRouterClient) Extract(ctx context.Context, systemPrompt, rawText, inventoryContext, sessionID string) (domain.Extraction, Usage, error) {
-	if inventoryContext != "" {
-		systemPrompt += inventoryContext
-	}
-
+// systemPrompt adalah prompt milik agent pemanggil. Tidak ada konteks
+// inventory yang di-inject — pencocokan nama barang ke master goods
+// dilakukan sistem via query DB (agent.ResolveGoods), hemat token.
+func (c *openRouterClient) Extract(ctx context.Context, systemPrompt, rawText, sessionID string) (domain.Extraction, Usage, error) {
 	body := c.buildChatRequest([]chatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: BuildUserPrompt(rawText)},
@@ -357,23 +328,6 @@ func parseIntentContent(content string) (domain.ServiceAction, error) {
 		return domain.ServiceAction{}, err
 	}
 	return a, nil
-}
-
-// ReasonConversion meminta LLM menalar konversi satuan dari konteks yang
-// dibawa rawText (disusun caller: pesan user, nama barang, satuan stok,
-// jumlah pemakaian). Hanya dipanggil di jalur ambigu.
-func (c *openRouterClient) ReasonConversion(ctx context.Context, systemPrompt, rawText, sessionID string) (ConversionReasoning, Usage, error) {
-	content, usage, err := c.doChat(ctx, systemPrompt, rawText, sessionID)
-	if err != nil {
-		return ConversionReasoning{}, usage, err
-	}
-
-	clean := extractJSON(content)
-	var r ConversionReasoning
-	if err := json.Unmarshal([]byte(clean), &r); err != nil {
-		return ConversionReasoning{}, usage, fmt.Errorf("parsing JSON LLM: %w", err)
-	}
-	return r, usage, nil
 }
 
 // doChat menjalankan chat completion sederhana (system+user) dan

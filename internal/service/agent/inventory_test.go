@@ -29,8 +29,8 @@ type fakeGoodsRepo struct {
 
 func (f *fakeGoodsRepo) WithTx(tx *gorm.DB) repository.GoodsRepository { return f }
 
-func (f *fakeGoodsRepo) GetByName(ctx context.Context, name string) (*domain.Good, error) {
-	if g, ok := f.byName[strings.ToLower(name)]; ok {
+func (f *fakeGoodsRepo) GetByName(ctx context.Context, chatID, name string) (*domain.Good, error) {
+	if g, ok := f.byName[chatID+"|"+strings.ToLower(name)]; ok {
 		return g, nil
 	}
 	return nil, gorm.ErrRecordNotFound
@@ -53,7 +53,7 @@ func (f *fakeInvRepo) SearchByName(ctx context.Context, chatID, keyword string) 
 
 // item membuat inventory yang terhubung ke goods dengan nama tertentu.
 func item(name string, qty float64) domain.Inventory {
-	g := &domain.Good{Name: name}
+	g := &domain.Good{ChatID: "c1", Name: name}
 	return domain.Inventory{ChatID: "c1", GoodsID: g.ID, Good: g, StockQty: qty, Unit: "pcs"}
 }
 
@@ -61,7 +61,7 @@ func testGoodsRepos(exact map[string]*domain.Inventory, search []domain.Inventor
 	invRepo := &fakeInvRepo{exact: exact, search: search}
 	goodsRepo := &fakeGoodsRepo{byName: map[string]*domain.Good{}}
 	for _, inv := range exact {
-		goodsRepo.byName[strings.ToLower(inv.Name())] = inv.Good
+		goodsRepo.byName[inv.ChatID+"|"+strings.ToLower(inv.Name())] = inv.Good
 	}
 	return goodsRepo, invRepo
 }

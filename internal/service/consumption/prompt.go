@@ -20,7 +20,7 @@ Aturan aksi:
 
 Aturan lain:
 - usage_qty default 1; usage_unit default "pcs"; bila user menyebut satuan volume/berat (ml/gr) gunakan itu.
-- item_name harus PERSIS nama barang di inventory (termasuk ukuran, mis. "susu uht 500ml").
+- item_name harus PERSIS nama barang di master goods (termasuk ukuran, mis. "susu uht 500ml"). Satuan konversi/kemasan diambil sistem dari master — cukup sebutkan jumlah & satuan pemakaian apa adanya.
 - usage_date format "YYYY-MM-DD"; kosongkan bila tidak disebut.`
 
 // conversionReasonPrompt adalah system prompt untuk penalaran konversi

@@ -57,7 +57,6 @@ func (a *reportAgent) handleGetReport(ctx context.Context, msg entity.IncomingMe
 	// Extract parameters dari params
 	reportType := "summary" // default
 	period := "today"       // default
-	var itemFilter string
 	var customDateRange string
 
 	if rt, ok := action.Params["report_type"].(string); ok {
@@ -66,18 +65,15 @@ func (a *reportAgent) handleGetReport(ctx context.Context, msg entity.IncomingMe
 	if p, ok := action.Params["period"].(string); ok {
 		period = p
 	}
-	if filter, ok := action.Params["item_filter"].(string); ok {
-		itemFilter = filter
-	}
 	if cdr, ok := action.Params["custom_date_range"].(string); ok {
 		customDateRange = cdr
 	}
 
-	return a.generateReport(ctx, msg, action, reportType, period, itemFilter, customDateRange, intentCost)
+	return a.generateReport(ctx, msg, action, reportType, period, customDateRange, intentCost)
 }
 
 // generateReport membuat laporan berdasarkan parameter yang diekstrak oleh LLM.
-func (a *reportAgent) generateReport(ctx context.Context, msg entity.IncomingMessage, action domain.ServiceAction, reportType, periodType, itemFilter, customDateRange string, intentCost float64) error {
+func (a *reportAgent) generateReport(ctx context.Context, msg entity.IncomingMessage, action domain.ServiceAction, reportType, periodType, customDateRange string, intentCost float64) error {
 	// Parse period ke time range
 	var from, to time.Time
 	now := time.Now()

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -43,8 +42,8 @@ func (s *Service) StartCycleWithDate(ctx context.Context, chatID string, goods *
 	if goods.ConversionUom != "" && goods.FactorUom > 0 {
 		conversionFactor = goods.FactorUom
 	}
-	// Satuan terkecil: satuan konversi master, fallback heuristic legacy.
-	smallestUnit := determineSmallestUnit(purchaseUnit)
+	// Satuan konversi: master apa adanya; tanpa faktor → satuan beli verbatim.
+	smallestUnit := purchaseUnit
 	if goods.ConversionUom != "" && goods.FactorUom > 0 {
 		smallestUnit = goods.ConversionUom
 	}
@@ -94,43 +93,6 @@ func parseUsageDate(dateStr string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("format tanggal tidak dikenali: %s", dateStr)
 }
 
-// determineSmallestUnit menentukan satuan terkecil berdasarkan satuan pembelian dan item name
-func determineSmallestUnit(purchaseUnit string) string {
-	lowerUnit := strings.ToLower(purchaseUnit)
-
-	// Liquid units -> ml (be more specific to avoid false matches)
-	if strings.Contains(lowerUnit, "ml") || strings.Contains(lowerUnit, "mililiter") || strings.Contains(lowerUnit, "mililitre") {
-		return "ml"
-	}
-	if strings.Contains(lowerUnit, "liter") {
-		return "ml"
-	}
-	if strings.Contains(lowerUnit, "lt") {
-		return "ml"
-	}
-	// Only match standalone "l" as a unit, not "l" inside words like "kaleng"
-	if lowerUnit == "l" || strings.HasSuffix(lowerUnit, " l") || strings.HasPrefix(lowerUnit, "l ") {
-		return "ml"
-	}
-
-	// Solid units -> gr
-	if strings.Contains(lowerUnit, "gr") || strings.Contains(lowerUnit, "gram") {
-		return "gr"
-	}
-	if strings.Contains(lowerUnit, "kg") || strings.Contains(lowerUnit, "kilogram") {
-		return "gr"
-	}
-
-	// Count units -> pcs
-	if strings.Contains(lowerUnit, "pcs") || strings.Contains(lowerUnit, "buah") ||
-		strings.Contains(lowerUnit, "keping") || strings.Contains(lowerUnit, "ball") {
-		return "pcs"
-	}
-
-	// Default to gr for unknown units
-	return "gr"
-}
-
 // cycleDisplayUnit menentukan satuan tampilan cycle: satuan konversi yang
 // tersimpan di cycle (dari master goods, mis. "lt") apa adanya — tanpa
 // normalisasi gr/ml. Fallback heuristic legacy bila kosong.
@@ -141,7 +103,7 @@ func cycleDisplayUnit(cycle *domain.ConsumptionCycle) string {
 	if cycle.ConsumedUnit != "" {
 		return cycle.ConsumedUnit
 	}
-	return determineSmallestUnit(cycle.PurchaseUnit)
+	return cycle.PurchaseUnit
 }
 
 // StartUsage memulai pemakaian item (saat user bilang "pakai susu 400gr").
@@ -159,13 +121,11 @@ func (s *Service) StartUsage(ctx context.Context, chatID string, goods *domain.G
 		}
 	}
 
-	// Determine smallest unit based on usage unit
-	smallestUnit := determineSmallestUnit(usageUnit)
-
 	// Conversion factor = isi per satuan stok, APA ADANYA dari master goods
-	// (1 galon = 15 lt → factor 15, unit "lt") — TANPA normalisasi satuan
-	// dasar dan TANPA heuristik nama barang: bila master belum punya
-	// faktor, pakai param caller apa adanya.
+	// (1 galon = 15 lt → factor 15, unit "lt"). Bila master belum punya
+	// faktor: samakan dengan satuan stok (galon → galon, factor 1) — tanpa
+	// heuristik satuan dasar (gr/ml).
+	smallestUnit := usageUnit
 	finalConsumptionQty := usageQty
 	finalConversionFactor := conversionFactor
 
@@ -459,8 +419,8 @@ func (s *Service) GetHistory(ctx context.Context, chatID string, goods *domain.G
 	var result string
 	result += fmt.Sprintf("📊 History Konsumsi: %s\n\n", itemName)
 
-	for i, cycle := range cycles {
-
+	for i := range cycles {
+		cycle := &cycles[i]
 		daysInUse := 0.0
 		if cycle.EndDate != nil {
 			daysInUse = cycle.EndDate.Sub(cycle.StartDate).Hours() / 24
@@ -474,8 +434,8 @@ func (s *Service) GetHistory(ctx context.Context, chatID string, goods *domain.G
 		}
 
 		totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-		totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan dasar (gr/ml)
-		displayUnit := determineSmallestUnit(cycle.PurchaseUnit)
+		totalConsumedInSmallestUnit := cycle.ConsumedQty // satuan konversi tersimpan
+		displayUnit := cycleDisplayUnit(cycle)
 
 		dailyConsumptionInSmallestUnit := 0.0
 		if daysInUse > 0 && totalConsumedInSmallestUnit > 0 {
@@ -553,7 +513,7 @@ func (s *Service) CalculateDailyConsumption(ctx context.Context, chatID, itemNam
 
 	totalPurchasedInSmallestUnit := purchaseQty * conversionFactor
 	dailyConsumption := totalPurchasedInSmallestUnit / daysInUse
-	displayUnit := determineSmallestUnit(purchaseUnit)
+	displayUnit := purchaseUnit
 
 	beliStr, beliUnitStr := formatQty(totalPurchasedInSmallestUnit, displayUnit)
 	rateStr, rateUnitStr := formatQty(dailyConsumption, displayUnit)

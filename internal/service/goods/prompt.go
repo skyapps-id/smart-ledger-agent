@@ -21,6 +21,6 @@ Aturan aksi:
 
 Aturan lain:
 - factor_unit wajib salah satu: ml, l, lt, liter, gr, g, kg, pcs (bila disebut).
-- kategori disarankan dari daftar: MINUMAN, SEMBAKO, MAKAN, TAGIHAN, HARI_HARI, KESEHATAN, PENDIDIKAN, TRANSPORTASI, HIBURAN, LAINNYA (bebas bila tidak cocok).
+- kategori opsional; bila tidak disebut user, BIARKAN kosong — sistem menebak dari nama barang.
 - item_name PERSIS nama barang di master ("susu uht 500ml", termasuk ukuran).
 - Angka boleh format "15lt", "15 lt", "1,5kg" -> factor_qty numerik + factor_unit terpisah.`

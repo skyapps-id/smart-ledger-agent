@@ -75,8 +75,8 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		result, err := service.CalculateDailyConsumption(ctx, chatID, "Susu UHT", purchaseDate, endDate, 6.0, "kaleng", 1000.0)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Susu UHT")
-		assert.Contains(t, result, "6000 gr")       // tanpa satuan asli user → satuan dasar, TIDAK auto-upgrade ke kg
-		assert.Contains(t, result, "206.9 gr/hari") // 6000 / 29 hari = 206.9
+		assert.Contains(t, result, "6000 kaleng")       // tanpa satuan asli user → satuan dasar, TIDAK auto-upgrade ke kg
+		assert.Contains(t, result, "206.9 kaleng/hari") // 6000 / 29 hari = 206.9
 	})
 
 	t.Run("Error handling - tanggal habis sebelum pembelian", func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, info, "Kopi")
 		assert.Contains(t, info, "1 kg")    // satuan beli user
-		assert.Contains(t, info, "gr/hari") // rate dalam satuan tersimpan (verbatim)
+		assert.Contains(t, info, "kg/hari") // rate dalam satuan tersimpan (verbatim)
 	})
 }
 
@@ -130,10 +130,10 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 		history, err := service.GetHistory(ctx, chatID, teh, 10)
 		require.NoError(t, err)
 		assert.Contains(t, history, "Teh")
-		assert.Contains(t, history, "gr/hari") // Harus menampilkan rate dalam gram per hari
+		assert.Contains(t, history, "bungkus/hari") // rate dalam satuan tersimpan (verbatim)
 
 		// Cycle pertama: 10 bungkus x 50gr = 500gr / 14 hari = 35.7 gr/hari
-		assert.Contains(t, history, "500 gr") // Total pembelian
+		assert.Contains(t, history, "500 bungkus") // Total pembelian
 	})
 
 	t.Run("Calculate daily consumption untuk berbagai scenario", func(t *testing.T) {
@@ -173,8 +173,8 @@ func TestConsumptionHistoryWithDailyRate(t *testing.T) {
 
 				result, err := service.CalculateDailyConsumption(ctx, chatID, "Test Item", start, end, tc.purchaseQty, tc.purchaseUnit, tc.convFactor)
 				require.NoError(t, err)
-				// Rate tampil dalam satuan tersimpan apa adanya (tanpa konversi).
-				assert.Contains(t, result, "gr/hari")
+				// Rate tampil dalam satuan user apa adanya (tanpa konversi).
+				assert.Contains(t, result, tc.purchaseUnit+"/hari")
 			})
 		}
 	})

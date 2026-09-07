@@ -136,12 +136,19 @@ func (a *goodsAgent) handleAdd(ctx context.Context, msg entity.IncomingMessage, 
 		}
 		factorInfo = fmt.Sprintf("\nKonversi: 1 %s = %g %s", unit, factorQty, factorUnit)
 	}
-	categoryInfo := ""
-	if category != "" {
-		if err := a.goodsRepo.WithTx(a.db).UpdateCategory(ctx, g.ID, category); err != nil {
-			a.log.ErrorContext(ctx, "gagal simpan kategori", "err", err)
-		}
-		categoryInfo = fmt.Sprintf("\nKategori: %s", category)
+	// Kategori kosong → sarankan dari nama barang (keyword sederhana)
+	// supaya master tidak pernah tanpa kategori; user bisa koreksi kapan pun.
+	suggested := false
+	if category == "" {
+		category = suggestCategory(itemName)
+		suggested = true
+	}
+	if err := a.goodsRepo.WithTx(a.db).UpdateCategory(ctx, g.ID, category); err != nil {
+		a.log.ErrorContext(ctx, "gagal simpan kategori", "err", err)
+	}
+	categoryInfo := fmt.Sprintf("\nKategori: %s", category)
+	if suggested {
+		categoryInfo += " (disarankan — salah? ketik: set kategori " + g.Name + " jadi [kategori])"
 	}
 
 	verb := "ditambahkan"
@@ -369,6 +376,35 @@ func uomOrDefault(uom string) string {
 		return "pcs"
 	}
 	return uom
+}
+
+// suggestCategory menebak kategori dari nama barang lewat keyword umum.
+// Murni heuristic teks (tanpa LLM) — dipakai saat tambah barang tanpa
+// kategori agar master tidak pernah kosong; koreksi via set_category.
+func suggestCategory(name string) string {
+	lower := strings.ToLower(name)
+	keywords := []struct {
+		category string
+		words    []string
+	}{
+		{"MINUMAN", []string{"susu", "kopi", "teh", "air", "minuman", "jus", "soda", "sirup", "galon", "aqua", "le minerale", "uht", "milo", "ovaltine"}},
+		{"SEMBAKO", []string{"beras", "gula", "tepung", "mie", "bumbu", "minyak", "kacang", "cabe", "bawang", "kecap", "garam", "sambal", "saos", "sago", "terigu"}},
+		{"MAKAN", []string{"roti", "biskuit", "snack", "keripik", "wafer", "coklat", "cokelat", "jajan", "bakso", "sosis", "kornet", "sarden", "kue"}},
+		{"HARI_HARI", []string{"sabun", "deterjen", "detergent", "tisu", "tissue", "plastik", "pembersih", "shampo", "sampo", "pasta gigi", "odol", "sikat", "bibir", "handuk", "kembang"}},
+		{"POPUK", []string{"popok", "diaper", "pampers", "mamypoko"}},
+		{"TAGIHAN", []string{"listrik", "internet", "pulsa", "wifi", "token", "pdam", "indihome"}},
+		{"TRANSPORT", []string{"bensin", "bbm", "pertalite", "pertamax", "solar", "parkir", "ojek", "tol", "transport"}},
+		{"HOBBY", []string{"game", "buku", "film", "mainan", "musik"}},
+		{"STOK_KELUAR", []string{"baju", "sepatu", "sandal", "tas", "kaus", "celana", "jaket"}},
+	}
+	for _, k := range keywords {
+		for _, w := range k.words {
+			if strings.Contains(lower, w) {
+				return k.category
+			}
+		}
+	}
+	return "LAINNYA"
 }
 
 // categoryOrDefault mengembalikan kategori kanonik barang, atau "(belum

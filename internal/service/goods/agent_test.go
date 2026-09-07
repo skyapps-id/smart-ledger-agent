@@ -292,3 +292,55 @@ func TestGoodsNotFound(t *testing.T) {
 	require.Len(t, senderMock.msgs, 1)
 	assert.Contains(t, senderMock.msgs[0], "belum ada di master")
 }
+
+func TestGoodsAddSuggestsCategory(t *testing.T) {
+	ag, db, senderMock, _ := setupGoodsAgentTest(t)
+	ctx := context.Background()
+
+	// Tanpa kategori → sistem menebak dari nama + memberi tahu cara koreksi.
+	err := ag.Handle(ctx, agent.Request{
+		Message: incoming("tambah barang galon air satuan galon, 1 galon = 15lt"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "add", "item_name": "galon air", "unit": "galon",
+			"factor_qty": 15.0, "factor_unit": "lt",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, senderMock.msgs, 1)
+	assert.Contains(t, senderMock.msgs[0], "Kategori: MINUMAN")
+	assert.Contains(t, senderMock.msgs[0], "disarankan")
+
+	var g domain.Good
+	require.NoError(t, db.Where("chat_id = ? AND name = ?", "c1", "galon air").First(&g).Error)
+	assert.Equal(t, "MINUMAN", g.Category)
+
+	// Nama tak dikenal → LAINNYA.
+	err = ag.Handle(ctx, agent.Request{
+		Message: incoming("tambah barang barang aneh satuan pcs"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "add", "item_name": "barang aneh", "unit": "pcs",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, senderMock.msgs[1], "Kategori: LAINNYA")
+
+	// Kategori eksplisit tidak ditimpa saran.
+	err = ag.Handle(ctx, agent.Request{
+		Message: incoming("tambah barang kopi kapal api satuan sachet kategori SEMBAKO"), Chat: chatInitialized(),
+		Action: domain.ServiceAction{Action: domain.ActionGoods, Params: map[string]interface{}{
+			"goods_action": "add", "item_name": "kopi kapal api", "unit": "sachet", "category": "SEMBAKO",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, senderMock.msgs[2], "Kategori: SEMBAKO")
+	assert.NotContains(t, senderMock.msgs[2], "disarankan")
+}
+
+func TestSuggestCategory(t *testing.T) {
+	assert.Equal(t, "MINUMAN", suggestCategory("Le Minerale Galon"))
+	assert.Equal(t, "SEMBAKO", suggestCategory("Beras 5kg"))
+	assert.Equal(t, "HARI_HARI", suggestCategory("Sabun Mandi"))
+	assert.Equal(t, "TAGIHAN", suggestCategory("Token Listrik"))
+	assert.Equal(t, "TRANSPORT", suggestCategory("Bensin Pertalite"))
+	assert.Equal(t, "LAINNYA", suggestCategory("ongkos ketik"))
+}

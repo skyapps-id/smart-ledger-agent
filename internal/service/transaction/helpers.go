@@ -2,12 +2,8 @@ package transaction
 
 import (
 	"context"
-
 	"fmt"
 	"math"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -140,86 +136,3 @@ func repurchaseAnalysis(newTxnDate time.Time, last *domain.Transaction) string {
 }
 
 // ── Unit parsing helpers ──
-
-// parseConversionInfo mengambil informasi konversi dari notes
-// Contoh: "100g per pcs" → (100, "g")
-// Contoh: "200ml per botol" → (200, "ml")
-// Contoh: "" → (0, "")
-func parseConversionInfo(notes string) (float64, string) {
-	if notes == "" {
-		return 0, ""
-	}
-
-	// Cari pattern angka + unit + "per" + unit packaging
-	// Menggunakan regex sederhana
-	lowerNotes := strings.ToLower(notes)
-
-	// Pattern 1: "100g per pcs", "200ml per botol", "1kg per pack"
-	re := `(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*per\s*([a-zA-Z]+)`
-	matches := regexp.MustCompile(re).FindStringSubmatch(lowerNotes)
-
-	if len(matches) >= 3 {
-		// matches[0] = full match
-		// matches[1] = number (100, 200, etc)
-		// matches[2] = unit (g, ml, kg, etc)
-		// matches[3] = packaging unit (pcs, botol, pack, etc)
-		quantity, err := strconv.ParseFloat(matches[1], 64)
-		if err == nil {
-			unit := matches[2]
-			// Normalize unit
-			switch unit {
-			case "gram", "g":
-				unit = "g"
-			case "mililiter", "mililitre", "ml":
-				unit = "ml"
-			case "kilogram", "kg":
-				unit = "kg"
-			}
-			return quantity, unit
-		}
-	}
-
-	return 0, ""
-}
-
-// getConversionFactor menghitung conversion factor dari satuan asli ke satuan terkecil
-// Contoh: "500ml" → 500, "1kg" → 1000, "250gr" → 250
-func getConversionFactor(originalUnit string) float64 {
-	lowerUnit := strings.ToLower(originalUnit)
-
-	switch {
-	case strings.Contains(lowerUnit, "ml"):
-		// ml adalah satuan terkecil untuk liquid
-		if qty := extractQuantityFromUnit(originalUnit); qty > 0 {
-			return qty
-		}
-		return 1.0
-	case strings.Contains(lowerUnit, "gr"):
-		// gr adalah satuan terkecil untuk solid
-		if qty := extractQuantityFromUnit(originalUnit); qty > 0 {
-			return qty
-		}
-		return 1.0
-	case strings.Contains(lowerUnit, "kg"):
-		return 1000.0 // kg ke gr
-	case strings.Contains(lowerUnit, "l"), strings.Contains(lowerUnit, "liter"):
-		return 1000.0 // liter ke ml
-	default:
-		return 1.0
-	}
-}
-
-// extractQuantityFromUnit mengekstrak quantity dari string unit
-// Contoh: "500ml" → 500, "1.5kg" → 1.5
-func extractQuantityFromUnit(unitStr string) float64 {
-	re := regexp.MustCompile(`(\d+(?:\.\d+)?)`)
-	matches := re.FindStringSubmatch(unitStr)
-
-	if len(matches) >= 2 {
-		if qty, err := strconv.ParseFloat(matches[1], 64); err == nil {
-			return qty
-		}
-	}
-
-	return 0
-}

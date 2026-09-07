@@ -34,19 +34,16 @@ AMOUNT (rupiah bulat): "50rb"/"50k" → 50000; "1.5jt" → 1500000; "75.000" →
 
 TANGGAL (dari [KONTEKS WAKTU] di akhir prompt):
 - transaction_date: HANYA bila disebut. "kemarin" -1 hari; "25/08" → "2026-08-25" (tahun berjalan). Tanpa tanggal → "".
-- consumption_date: HANYA bila disebut kapan barang (belum) HABIS ("habis 30/08"). Selain itu "".
-- total_consumption: angka pasti yang sudah/akan terpakai, SEBUT user apa adanya — JANGAN konversi satuan (sistem menghitung dari master goods). Default 0.
 
-FIELD WAJIB: type, category, item_name, quantity, unit, amount, affects_stock, notes, transaction_date, consumption_date, total_consumption. quantity default 1; unit default "pcs"; notes default "".
+FIELD WAJIB: type, category, item_name, quantity, unit, amount, affects_stock, notes, transaction_date. quantity default 1; unit default "pcs"; notes default "".
 
 CONTOH:
-"beli bensin 50rb" → {"type":"EXPENSE","category":"LAINNYA","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"beli beras 5kg 75rb" → {"type":"EXPENSE","category":"SEMBAKO","item_name":"beras","quantity":5,"unit":"kg","amount":75000,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"kecap 250ml X 5 botol 100rb" → {"type":"EXPENSE","category":"SEMBAKO","item_name":"kecap 250ml","quantity":5,"unit":"botol","amount":100000,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"bayar listrik 200rb tanggal 25/08" → {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2026-08-25","consumption_date":"","total_consumption":0}
-"beli popok 100pcs" → {"type":"EXPENSE","category":"HARI_HARI","item_name":"popok","quantity":100,"unit":"pcs","amount":0,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"gaji masuk 10jt" → {"type":"INCOME","category":"GAJI","item_name":"gaji","quantity":1,"unit":"pcs","amount":10000000,"affects_stock":false,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"saldo awal 5jt" → {"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"ambil susu uht 500ml 2 pcs" → {"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu uht 500ml","quantity":2,"unit":"pcs","amount":0,"affects_stock":false,"notes":"","transaction_date":"","consumption_date":"","total_consumption":0}
-"susu 200ml beli 12 botol 60rb habis 1 liter" → {"type":"EXPENSE","category":"MINUMAN","item_name":"susu 200ml","quantity":12,"unit":"botol","amount":60000,"affects_stock":true,"notes":"","transaction_date":"","consumption_date":"","total_consumption":1}
-"halo" → {"type":"NONE","category":"LAINNYA","item_name":"","quantity":0,"unit":"","amount":0,"affects_stock":false,"notes":"sapaan/chitchat","transaction_date":"","consumption_date":"","total_consumption":0}`
+"beli bensin 50rb" → {"type":"EXPENSE","category":"LAINNYA","item_name":"bensin","quantity":1,"unit":"liter","amount":50000,"affects_stock":false,"notes":"","transaction_date":""}
+"beli beras 5kg 75rb" → {"type":"EXPENSE","category":"SEMBAKO","item_name":"beras","quantity":5,"unit":"kg","amount":75000,"affects_stock":true,"notes":"","transaction_date":""}
+"kecap 250ml X 5 botol 100rb" → {"type":"EXPENSE","category":"SEMBAKO","item_name":"kecap 250ml","quantity":5,"unit":"botol","amount":100000,"affects_stock":true,"notes":"","transaction_date":""}
+"bayar listrik 200rb tanggal 25/08" → {"type":"EXPENSE","category":"TAGIHAN","item_name":"listrik","quantity":1,"unit":"pcs","amount":200000,"affects_stock":false,"notes":"","transaction_date":"2026-08-25"}
+"beli popok 100pcs" → {"type":"EXPENSE","category":"HARI_HARI","item_name":"popok","quantity":100,"unit":"pcs","amount":0,"affects_stock":true,"notes":"","transaction_date":""}
+"gaji masuk 10jt" → {"type":"INCOME","category":"GAJI","item_name":"gaji","quantity":1,"unit":"pcs","amount":10000000,"affects_stock":false,"notes":"","transaction_date":""}
+"saldo awal 5jt" → {"type":"INCOME","category":"SALDO_AWAL","item_name":"saldo awal","quantity":1,"unit":"pcs","amount":5000000,"affects_stock":false,"notes":"","transaction_date":""}
+"ambil susu uht 500ml 2 pcs" → {"type":"CONSUMPTION","category":"LAINNYA","item_name":"susu uht 500ml","quantity":2,"unit":"pcs","amount":0,"affects_stock":false,"notes":"","transaction_date":""}
+"halo" → {"type":"NONE","category":"LAINNYA","item_name":"","quantity":0,"unit":"","amount":0,"affects_stock":false,"notes":"sapaan/chitchat","transaction_date":""}`

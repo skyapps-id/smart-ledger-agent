@@ -246,15 +246,6 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		}
 		txnDate = parsedDate
 
-		var consumptionDate *time.Time
-		if ext.ConsumptionDate != "" {
-			cd, err := parseTransactionDate(ext.ConsumptionDate)
-			if err != nil {
-				return fmt.Errorf("format tanggal konsumsi tidak valid: %w", err)
-			}
-			consumptionDate = &cd
-		}
-
 		txn := &domain.Transaction{
 			ChatID:          msg.ChatID,
 			SenderPhone:     msg.UserPhone,
@@ -265,8 +256,6 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			Amount:          ext.Amount,
 			RawPayload:      msg.Text,
 			TransactionDate: txnDate,
-			ConsumptionDate: consumptionDate,
-			TotalConsumed:   ext.TotalConsumption,
 		}
 		if err := a.txnRepo.WithTx(tx).Create(ctx, txn); err != nil {
 			return fmt.Errorf("catat expense: %w", err)
@@ -316,57 +305,6 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			), nil
 		}
 
-		// Parse conversion info dari notes (misal "100g per pcs")
-		perUnitQty, perUnitUnit := parseConversionInfo(ext.Notes)
-
-		// Hitung total pembelian dalam satuan dasar
-		totalPurchased := ext.Quantity
-		if perUnitQty > 0 {
-			totalPurchased = ext.Quantity * perUnitQty
-		}
-
-		// Tampilkan analisa konsumsi bila ada consumption_date dan total_consumption
-		var consumptionAnalysis string
-		if ext.ConsumptionDate != "" && ext.TotalConsumption > 0 {
-			txnDate, _ := parseTransactionDate(ext.TransactionDate)
-			consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
-			if err == nil {
-				duration := consumptionDate.Sub(txnDate).Hours() / 24 // durasi dalam hari
-				if duration > 0 {
-					// Hitung rate konsumsi per hari
-					dailyRate := ext.TotalConsumption / duration
-					percentageConsumed := (ext.TotalConsumption / totalPurchased) * 100
-
-					unitDisplay := perUnitUnit
-					if unitDisplay == "" {
-						unitDisplay = ext.Unit
-					}
-
-					consumptionAnalysis = fmt.Sprintf(
-						" Analisa konsumsi: %g dari %g %s (%.0f%%) habis dalam %.0f hari (%s → %s). Rate: %.1f %s/hari.",
-						ext.TotalConsumption, totalPurchased, unitDisplay,
-						percentageConsumed, duration,
-						txnDate.Format("02/01/2006"), consumptionDate.Format("02/01/2006"),
-						dailyRate, unitDisplay,
-					)
-				}
-			}
-		} else if ext.ConsumptionDate != "" {
-			// Hanya tanggal habis tanpa total_consumption
-			txnDate, _ := parseTransactionDate(ext.TransactionDate)
-			consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
-			if err == nil {
-				duration := consumptionDate.Sub(txnDate).Hours() / 24
-				if duration > 0 {
-					consumptionAnalysis = fmt.Sprintf(
-						" Estimasi habis dalam: %.0f hari (%s → %s: %s).",
-						duration, txnDate.Format("02/01/2006"),
-						consumptionDate.Format("02/01/2006"), formatDuration(duration),
-					)
-				}
-			}
-		}
-
 		// Build reply utama
 		baseReply := fmt.Sprintf(
 			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
@@ -374,10 +312,6 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			agent.FormatRupiah(ext.Amount), category,
 			inv.StockQty, inv.Unit,
 		)
-
-		if consumptionAnalysis != "" {
-			baseReply += consumptionAnalysis
-		}
 
 		if analysis := repurchaseAnalysis(txnDate, lastPurchase); analysis != "" {
 			baseReply += analysis
@@ -390,31 +324,6 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		"Pengeluaran tercatat: %s sebesar Rp%s (%s).",
 		ext.ItemName, agent.FormatRupiah(ext.Amount), category,
 	)
-
-	// Analisa konsumsi untuk non-stock items
-	if ext.ConsumptionDate != "" && ext.TotalConsumption > 0 {
-		txnDate, _ := parseTransactionDate(ext.TransactionDate)
-		consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
-		if err == nil {
-			duration := consumptionDate.Sub(txnDate).Hours() / 24
-			if duration > 0 {
-				dailyRate := ext.TotalConsumption / duration
-				baseReply += fmt.Sprintf(
-					" Analisa konsumsi: %g habis dalam %.0f hari. Rate: %.1f /hari.",
-					ext.TotalConsumption, duration, dailyRate,
-				)
-			}
-		}
-	} else if ext.ConsumptionDate != "" {
-		txnDate, _ := parseTransactionDate(ext.TransactionDate)
-		consumptionDate, err := parseTransactionDate(ext.ConsumptionDate)
-		if err == nil {
-			duration := consumptionDate.Sub(txnDate).Hours() / 24
-			if duration > 0 {
-				baseReply += fmt.Sprintf(" Estimasi habis dalam: %.0f hari.", duration)
-			}
-		}
-	}
 
 	if analysis := repurchaseAnalysis(txnDate, lastPurchase); analysis != "" {
 		baseReply += analysis

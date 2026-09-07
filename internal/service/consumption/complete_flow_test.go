@@ -155,7 +155,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 			assert.Contains(t, report, "Susu 400gr")
 			assert.Contains(t, report, "sudah habis!")
 			assert.Contains(t, report, "⏰ Durasi:")
-			assert.Contains(t, report, "📊 Total: 400 gr")
+			assert.Contains(t, report, "📊 Total: 400 kaleng") // tanpa faktor master → satuan stok verbatim, factor 400 param
 			assert.Contains(t, report, "📈 Rate:")
 
 			// Verifikasi cycle status - tidak boleh ada active cycle

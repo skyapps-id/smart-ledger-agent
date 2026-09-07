@@ -121,17 +121,15 @@ func (Good) TableName() string { return "goods" }
 // Extraction adalah contract JSON yang dikembalikan oleh LLM.
 // Sesuai RFC §5.1 dan §6.1.
 type Extraction struct {
-	Type             ExtractionType `json:"type"`
-	Category         string         `json:"category"`
-	ItemName         string         `json:"item_name"`
-	Quantity         float64        `json:"quantity"`
-	Unit             string         `json:"unit"`
-	Amount           float64        `json:"amount"`
-	AffectsStock     bool           `json:"affects_stock"`
-	Notes            string         `json:"notes"`
-	TransactionDate  string         `json:"transaction_date,omitempty"`  // format: "YYYY-MM-DD" atau kosong untuk hari ini
-	ConsumptionDate  string         `json:"consumption_date,omitempty"`  // format: "YYYY-MM-DD" untuk tanggal habis, bila ada
-	TotalConsumption float64        `json:"total_consumption,omitempty"` // jumlah total yang benar-benar habis dipakai (dalam unit yang sama)
+	Type            ExtractionType `json:"type"`
+	Category        string         `json:"category"`
+	ItemName        string         `json:"item_name"`
+	Quantity        float64        `json:"quantity"`
+	Unit            string         `json:"unit"`
+	Amount          float64        `json:"amount"`
+	AffectsStock    bool           `json:"affects_stock"`
+	Notes           string         `json:"notes"`
+	TransactionDate string         `json:"transaction_date,omitempty"` // format: "YYYY-MM-DD" atau kosong untuk hari ini
 }
 
 type ExtractionType string

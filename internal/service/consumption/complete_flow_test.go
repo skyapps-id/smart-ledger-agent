@@ -76,7 +76,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 		t.Run("Step 1 - Pembelian susu 5 kaleng", func(t *testing.T) {
 			purchaseDate := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-			// Resolve nama barang ke master goods (auto-create)
+			// Daftarkan barang ke master goods (master-first: daftar sebelum beli)
 			goods, err := goodsRepo.GetOrCreateByName(ctx, chatID, "Susu 400gr", "kaleng")
 			require.NoError(t, err)
 

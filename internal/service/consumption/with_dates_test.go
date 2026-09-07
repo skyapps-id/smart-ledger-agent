@@ -64,7 +64,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		actualDays := endDate.Sub(cycle.StartDate).Hours() / 24
 		assert.InDelta(t, expectedDays, actualDays, 0.5)
 
-		// ConsumedQty sudah dalam satuan dasar (gr) — bukan dikali factor lagi.
+		// ConsumedQty dalam satuan konversi (qty × faktor) — tidak dikali faktor lagi saat display.
 		assert.InDelta(t, 800.0, cycle.ConsumedQty, 1.0)
 	})
 
@@ -75,7 +75,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		result, err := service.CalculateDailyConsumption(ctx, chatID, "Susu UHT", purchaseDate, endDate, 6.0, "kaleng", 1000.0)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Susu UHT")
-		assert.Contains(t, result, "6000 kaleng")       // tanpa satuan asli user → satuan dasar, TIDAK auto-upgrade ke kg
+		assert.Contains(t, result, "6000 kaleng")       // ditampilkan dalam satuan beli (verbatim), TIDAK auto-upgrade ke kg
 		assert.Contains(t, result, "206.9 kaleng/hari") // 6000 / 29 hari = 206.9
 	})
 
@@ -91,7 +91,7 @@ func TestConsumptionWithDateRange(t *testing.T) {
 		assert.Contains(t, err.Error(), "tanggal habis harus setelah tanggal pembelian")
 	})
 
-	t.Run("Get active cycle info dalam satuan terkecil", func(t *testing.T) {
+	t.Run("Get active cycle info dalam satuan konversi master", func(t *testing.T) {
 		// Buat cycle aktif baru
 		purchaseDate, _ := time.Parse("2006-01-02", "2026-08-05")
 		_, err := service.StartCycleWithDate(ctx, chatID, kopi, 1.0, "kg", 1000.0, purchaseDate)

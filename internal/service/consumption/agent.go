@@ -127,9 +127,9 @@ func (a *consumptionAgent) handleConsumptionAction(ctx context.Context, msg enti
 		usageDate, _ := params["usage_date"].(string)
 		a.log.InfoContext(ctx, "consumption use", "item", itemName, "usage_qty", usageQty, "usage_unit", usageUnit, "usage_date", usageDate)
 
-		// conversion_factor hanya fallback bila nama barang TIDAK memuat
-		// ukuran; bila ada (mis. "susu bmt 200g"), StartUsage menurunkan
-		// faktor gr/ml sendiri dari nama barang hasil resolusi.
+		// conversion_factor dari classifier hanya fallback; StartUsage selalu
+		// memakai faktor master goods apa adanya (tanpa faktor → 1, satuan
+		// stok).
 		conversionFactor, _ := params["conversion_factor"].(float64)
 		if usageUnit == "" {
 			usageUnit = "pcs"
@@ -370,7 +370,7 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 
 	// Jalankan dalam transaction: kurangi stok + mulai/updates consumption cycle
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Kurangi stok dalam unit inventory (pcs)
+		// Kurangi stok dalam satuan stok (hasil konversi master)
 		if err := a.invRepo.WithTx(tx).DecreaseStock(ctx, inv.ID, usageQty); err != nil {
 			return err
 		}
@@ -386,8 +386,8 @@ func (a *consumptionAgent) handleUsageWithConsumption(ctx context.Context, msg e
 			return err
 		}
 
-		// Mulai consumption cycle: qty dalam SATUAN INVENTORY (pcs hasil
-		// konversi); StartUsage menurukan satuan dasar (gr/ml) dari nama barang.
+		// Mulai consumption cycle: qty dalam SATUAN STOK (hasil konversi
+		// master); StartUsage memakai faktor master apa adanya.
 		cycle, err := a.consumptionService.StartUsage(ctx, msg.ChatID, inv.Good, usageQty, usageUnit, conversionFactor, usageDate)
 		if err != nil {
 			return err

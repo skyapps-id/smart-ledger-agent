@@ -198,7 +198,7 @@ func (a *goodsAgent) handleList(ctx context.Context, msg entity.IncomingMessage,
 	}
 	if len(items) == 0 {
 		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
-			"Belum ada barang di master. Barang otomatis tercatat saat kamu belanja (contoh: \"beli beras 5kg 75rb\").", intentCost)
+			"Belum ada barang di master. Daftarkan dulu: \"tambah barang [nama] satuan [satuan]\" (contoh: tambah barang beras satuan kg).", intentCost)
 	}
 
 	var b strings.Builder
@@ -321,7 +321,7 @@ func (a *goodsAgent) resolveGood(ctx context.Context, msg entity.IncomingMessage
 	switch len(results) {
 	case 0:
 		return nil, true, agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
-			fmt.Sprintf("Barang '%s' belum ada di master. Barang otomatis tercatat saat dibeli.", itemName), intentCost)
+			fmt.Sprintf("Barang '%s' belum ada di master. Daftarkan dulu: \"tambah barang %s satuan [satuan]\".", itemName, itemName), intentCost)
 	case 1:
 		return &results[0], false, nil
 	}
@@ -370,7 +370,7 @@ func (a *goodsAgent) resolveGood(ctx context.Context, msg entity.IncomingMessage
 }
 
 // uomOrDefault mengembalikan satuan kanonik barang, atau "pcs" bila belum
-// diatur (barang auto-create dari ekstraksi LLM menyimpan satuan beli).
+// diatur saat registrasi.
 func uomOrDefault(uom string) string {
 	if strings.TrimSpace(uom) == "" {
 		return "pcs"

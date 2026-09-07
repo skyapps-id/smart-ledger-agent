@@ -56,7 +56,7 @@ func (s *Service) StartCycleWithDate(ctx context.Context, chatID string, goods *
 		PurchaseUnit:     purchaseUnit,
 		ConversionFactor: conversionFactor,
 		ConsumedQty:      0,
-		ConsumedUnit:     smallestUnit, // gunakan satuan terkecil yang sesuai
+		ConsumedUnit:     smallestUnit, // satuan konversi master apa adanya
 		Status:           domain.ConsumptionCycleActive,
 	}
 
@@ -94,8 +94,8 @@ func parseUsageDate(dateStr string) (time.Time, error) {
 }
 
 // cycleDisplayUnit menentukan satuan tampilan cycle: satuan konversi yang
-// tersimpan di cycle (dari master goods, mis. "lt") apa adanya — tanpa
-// normalisasi gr/ml. Fallback heuristic legacy bila kosong.
+// tersimpan di cycle (dari master goods, mis. "lt") apa adanya; fallback ke
+// satuan beli bila kosong.
 func cycleDisplayUnit(cycle *domain.ConsumptionCycle) string {
 	if cycle == nil {
 		return ""
@@ -144,11 +144,11 @@ func (s *Service) StartUsage(ctx context.Context, chatID string, goods *domain.G
 		GoodsID:          goods.ID,
 		BatchNumber:      batchNumber,
 		StartDate:        startDate,
-		PurchaseQty:      usageQty,  // gunakan quantity dari inventory (pcs)
-		PurchaseUnit:     usageUnit, // gunakan unit dari inventory (pcs)
+		PurchaseQty:      usageQty,  // qty pemakaian dalam satuan stok (hasil konversi master)
+		PurchaseUnit:     usageUnit, // satuan stok (dari master goods)
 		ConversionFactor: finalConversionFactor,
-		ConsumedQty:      finalConsumptionQty * finalConversionFactor, // tracking dalam unit asli (ml/gr)
-		ConsumedUnit:     smallestUnit,                                // tracking dalam unit asli (ml/gr)
+		ConsumedQty:      finalConsumptionQty * finalConversionFactor, // total dalam satuan konversi master (mis. lt)
+		ConsumedUnit:     smallestUnit,                                // satuan konversi master
 		Status:           domain.ConsumptionCycleActive,
 	}
 
@@ -174,7 +174,7 @@ func (s *Service) RecordConsumption(ctx context.Context, chatID string, goods *d
 
 	// Check jika cycle selesai (consumed >= purchased)
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-	totalConsumedInSmallestUnit := cycle.ConsumedQty // asumsi consumedQty sudah dalam satuan terkecil
+	totalConsumedInSmallestUnit := cycle.ConsumedQty // asumsi consumedQty sudah dalam satuan konversi (ConsumedUnit)
 
 	if totalConsumedInSmallestUnit >= totalPurchasedInSmallestUnit {
 		cycle.Status = domain.ConsumptionCycleCompleted
@@ -233,16 +233,16 @@ func (s *Service) CompleteUsageWithDate(ctx context.Context, chatID string, good
 		return "", fmt.Errorf("durasi penggunaan tidak valid")
 	}
 
-	// Hitung dalam satuan terkecil (gram/ml)
+	// Hitung dalam satuan konversi master (mis. lt)
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
 
-	// Determine the correct display unit based on both purchase unit and item name
+	// Satuan tampilan dari data cycle (satuan master)
 	displayUnit := cycleDisplayUnit(cycle)
 
 	// Update cycle ke completed
 	cycle.Status = domain.ConsumptionCycleCompleted
 	cycle.EndDate = &endTime
-	cycle.ConsumedQty = totalPurchasedInSmallestUnit // penuh, dalam satuan dasar (gr/ml)
+	cycle.ConsumedQty = totalPurchasedInSmallestUnit // penuh, dalam satuan konversi master
 	cycle.ConsumedUnit = displayUnit
 
 	if err := s.cycleRepo.Update(ctx, cycle); err != nil {
@@ -302,7 +302,7 @@ func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID string, goods *
 	daysInUse := time.Since(cycle.StartDate).Hours() / 24
 
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-	totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan dasar (gr/ml)
+	totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan konversi master
 	remainingInSmallestUnit := totalPurchasedInSmallestUnit - totalConsumedInSmallestUnit
 
 	dailyRateInSmallestUnit := 0.0
@@ -325,7 +325,7 @@ func (s *Service) GetActiveCycleInfo(ctx context.Context, chatID string, goods *
 		itemLabel = fmt.Sprintf("%s (%s)", itemName, cycle.BatchNumber)
 	}
 
-	// Determine the correct display unit based on both purchase unit and item name
+	// Satuan tampilan dari data cycle (satuan master)
 	displayUnit := cycleDisplayUnit(cycle)
 
 	beliStr, beliUnitStr := formatQty(totalPurchasedInSmallestUnit, displayUnit)
@@ -484,10 +484,10 @@ func (s *Service) CompleteCycleWithEndDate(ctx context.Context, chatID string, g
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
 	dailyConsumption := totalPurchasedInSmallestUnit / daysInUse
 
-	// Determine the correct display unit based on both purchase unit and item name
+	// Satuan tampilan dari data cycle (satuan master)
 	displayUnit := cycleDisplayUnit(cycle)
 
-	cycle.ConsumedQty = totalPurchasedInSmallestUnit // penuh, dalam satuan dasar (gr/ml)
+	cycle.ConsumedQty = totalPurchasedInSmallestUnit // penuh, dalam satuan konversi master
 	cycle.ConsumedUnit = displayUnit
 	cycle.Status = domain.ConsumptionCycleCompleted
 	cycle.EndDate = &endDate
@@ -504,7 +504,7 @@ func (s *Service) CompleteCycleWithEndDate(ctx context.Context, chatID string, g
 	return cycle, nil
 }
 
-// CalculateDailyConsumption menghitung konsumsi harian dalam satuan terkecil (gr/ml).
+// CalculateDailyConsumption menghitung konsumsi harian dalam satuan pembelian.
 func (s *Service) CalculateDailyConsumption(ctx context.Context, chatID, itemName string, purchaseDate, endDate time.Time, purchaseQty float64, purchaseUnit string, conversionFactor float64) (string, error) {
 	daysInUse := endDate.Sub(purchaseDate).Hours() / 24
 	if daysInUse <= 0 {
@@ -570,7 +570,7 @@ func (s *Service) UpdateConsumption(ctx context.Context, chatID string, goods *d
 	// Hitung ulang info untuk display
 	daysInUse := time.Since(cycle.StartDate).Hours() / 24
 	totalPurchasedInSmallestUnit := cycle.PurchaseQty * cycle.ConversionFactor
-	totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan dasar (gr/ml)
+	totalConsumedInSmallestUnit := cycle.ConsumedQty // sudah dalam satuan konversi master
 	remainingInSmallestUnit := totalPurchasedInSmallestUnit - totalConsumedInSmallestUnit
 
 	dailyRateInSmallestUnit := 0.0
@@ -583,7 +583,7 @@ func (s *Service) UpdateConsumption(ctx context.Context, chatID string, goods *d
 		estimationDays = int(remainingInSmallestUnit / dailyRateInSmallestUnit)
 	}
 
-	// Determine the correct display unit based on both purchase unit and item name
+	// Satuan tampilan dari data cycle (satuan master)
 	displayUnit := cycleDisplayUnit(cycle)
 
 	itemLabel := itemName

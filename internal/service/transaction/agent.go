@@ -410,10 +410,10 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 			return err
 		}
 
-		// Start/update consumption cycle: kirim qty dalam SATUAN INVENTORY
-		// (hasil konversi) — StartUsage menghitung sendiri faktor gr/ml-nya
-		// dari ukuran di nama barang. Relasi cycle via goods.
-		conversionFactor := 1.0 // fallback bila nama barang tanpa ukuran
+		// Start/update consumption cycle: kirim qty dalam SATUAN STOK
+		// (hasil konversi master) — StartUsage memakai faktor master
+		// goods apa adanya. Relasi cycle via goods.
+		conversionFactor := 1.0 // fallback; ditimpa faktor master di StartUsage
 		_, err := a.consumptionService.StartUsage(ctx, msg.ChatID, inv.Good, ext.Quantity, ext.Unit, conversionFactor, ext.TransactionDate)
 		return err
 	})

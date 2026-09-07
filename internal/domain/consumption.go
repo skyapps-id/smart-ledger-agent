@@ -26,7 +26,7 @@ type ConsumptionCycle struct {
 	EndDate          *time.Time             `gorm:"type:date" json:"end_date,omitempty"`
 	PurchaseQty      float64                `gorm:"type:numeric(12,2)" json:"purchase_qty"`
 	PurchaseUnit     string                 `gorm:"size:32" json:"purchase_unit"`
-	ConversionFactor float64                `gorm:"type:numeric(10,4)" json:"conversion_factor"` // factor ke satuan terkecil (gr/ml)
+	ConversionFactor float64                `gorm:"type:numeric(10,4)" json:"conversion_factor"` // faktor master verbatim (1 uom = faktor conversion_uom, mis. 15 lt per galon)
 	ConsumedQty      float64                `gorm:"type:numeric(12,2)" json:"consumed_qty"`
 	ConsumedUnit     string                 `gorm:"size:32" json:"consumed_unit"`
 	Status           ConsumptionCycleStatus `gorm:"size:16;default:'active'" json:"status"`

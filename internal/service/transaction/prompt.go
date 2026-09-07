@@ -27,7 +27,7 @@ AFFECTS_STOCK (hanya EXPENSE): true = barang FISIK yang disimpan (sembako, minum
 ITEM_NAME + QUANTITY + UNIT:
 - item_name: lowercase, ringkas. Ukuran/berat beda = produk beda ("susu bmt 200gr" ≠ "400gr").
 - GROSIR (beras, gula, minyak, kopi/susu bubuk): ukuran = jumlah beli → PISAH. "beras 5kg" → item "beras", qty 5, unit "kg".
-- KEMASAN (ukuran = identitas): ukuran TETAP di item_name. "kecap 250ml X 5 botol" → item "kecap 250ml", qty 5, unit "botol". "1 dus isi 50pcs" → qty 50, unit "pcs", notes "1 dus".
+- KEMASAN (ukuran = identitas): ukuran TETAP di item_name. "kecap 250ml X 5 botol" → item "kecap 250ml", qty 5, unit "botol". "isi N" = isi per kemasan — JANGAN dijumlah/dikalikan dengan jumlah beli; qty = jumlah KEMASAN yang dibeli: "popok isi 48 x3 192rb" → item "popok isi 48", qty 3, unit "pcs", notes "isi 48".
 - item_name = nama barang PERSIS sebagaimana disebut user (lowercase, sertakan ukuran/merk). JANGAN menebak, memperbaiki, atau memendekkan nama — pencocokan ke master dilakukan sistem.
 
 AMOUNT (rupiah bulat): "50rb"/"50k" → 50000; "1.5jt" → 1500000; "75.000" → 75000.

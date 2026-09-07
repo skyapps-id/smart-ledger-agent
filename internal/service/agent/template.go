@@ -49,7 +49,7 @@ QUERY STOK (semua variations):
 
 Tips:
 - Sebut nominal (50rb / 500k / 5jt) -> tercatat pengeluaran.
-- Sebut grosir (1 dus isi 50pcs) -> dikonversi otomatis.
+- Barang fisik: daftarkan dulu di master ("tambah barang popok isi 48 satuan ball") -> stok tercatat dalam satuan master.
 - Tanpa nominal (ambil/pakai) -> tercatat pemakaian stok.
 - Analisa konsumsi -> otomatis hitung durasi & rate pemakaian per hari.
 

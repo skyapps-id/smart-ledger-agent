@@ -366,6 +366,9 @@ erDiagram
         varchar(32) category
         varchar(128) item_name "denormalized display snapshot"
         numeric amount
+        numeric quantity "snapshot qty beli"
+        varchar(32) unit
+        numeric unit_price "harga beli satuan (amount/qty)"
         text raw_payload
         date transaction_date "bisa beda dari created_at (kemarin, 01/08)"
         timestamptz created_at

@@ -163,6 +163,9 @@ func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.Incoming
 		GoodsID:         goods.ID,
 		ItemName:        goods.Name,
 		Amount:          ext.Amount,
+		Quantity:        ext.Quantity,
+		Unit:            ext.Unit,
+		UnitPrice:       unitPrice(ext.Amount, ext.Quantity),
 		RawPayload:      msg.Text,
 		TransactionDate: txnDate,
 	}
@@ -254,6 +257,9 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			GoodsID:         goods.ID,
 			ItemName:        goods.Name,
 			Amount:          ext.Amount,
+			Quantity:        ext.Quantity,
+			Unit:            stockUnit,
+			UnitPrice:       unitPrice(ext.Amount, ext.Quantity),
 			RawPayload:      msg.Text,
 			TransactionDate: txnDate,
 		}

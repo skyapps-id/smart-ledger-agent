@@ -38,14 +38,17 @@ type Transaction struct {
 	Category    string          `gorm:"size:32" json:"category"`
 	// GoodsID = relasi ke master goods; ItemName tetap disimpan sebagai
 	// snapshot display (dipakai grouping laporan) — relasi tetap via id.
-	GoodsID         int64      `gorm:"index" json:"goods_id"`
-	ItemName        string     `gorm:"size:128" json:"item_name"`
-	Amount          float64    `gorm:"type:numeric(15,2)" json:"amount"`
-	RawPayload      string     `gorm:"type:text" json:"raw_payload"`
-	TransactionDate time.Time  `gorm:"type:date" json:"transaction_date"`        // tanggal transaksi (bisa beda dari created_at)
-	ConsumptionDate *time.Time `gorm:"type:date" json:"consumption_date"`        // tanggal barang habis (nullable)
-	TotalConsumed   float64    `gorm:"type:numeric(15,2)" json:"total_consumed"` // jumlah yang benar-benar habis dipakai
-	CreatedAt       time.Time  `json:"created_at"`
+	GoodsID  int64   `gorm:"index" json:"goods_id"`
+	ItemName string  `gorm:"size:128" json:"item_name"`
+	Amount   float64 `gorm:"type:numeric(15,2)" json:"amount"`
+	// Snapshot qty/satuan beli + harga satuan (amount/quantity) agar harga
+	// beli per unit bisa dibaca dari history tanpa rekonstruksi.
+	Quantity        float64   `gorm:"type:numeric(12,2)" json:"quantity"`
+	Unit            string    `gorm:"size:32" json:"unit"`
+	UnitPrice       float64   `gorm:"type:numeric(15,2)" json:"unit_price"`
+	RawPayload      string    `gorm:"type:text" json:"raw_payload"`
+	TransactionDate time.Time `gorm:"type:date" json:"transaction_date"` // tanggal transaksi (bisa beda dari created_at)
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func (Transaction) TableName() string { return "transactions" }

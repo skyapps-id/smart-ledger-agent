@@ -57,7 +57,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 	logRepo := repository.NewStockLogRepository(db)
 
 	logger := slog.Default()
-	consumptionService := NewService(db, cycleRepo, logger)
+	consumptionService := NewService(cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-flow"
@@ -76,7 +76,7 @@ func TestCompleteConsumptionFlow(t *testing.T) {
 		t.Run("Step 1 - Pembelian susu 5 kaleng", func(t *testing.T) {
 			purchaseDate := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
-			// Resolve nama barang ke master goods (auto-create)
+			// Daftarkan barang ke master goods (master-first: daftar sebelum beli)
 			goods, err := goodsRepo.GetOrCreateByName(ctx, chatID, "Susu 400gr", "kaleng")
 			require.NoError(t, err)
 
@@ -247,7 +247,7 @@ func TestStartUsageErrors(t *testing.T) {
 	db := setupCompleteFlowTestDB(t)
 	cycleRepo := repository.NewConsumptionCycleRepository(db)
 	logger := slog.Default()
-	service := NewService(db, cycleRepo, logger)
+	service := NewService(cycleRepo, logger)
 
 	ctx := context.Background()
 	chatID := "test-chat-errors"

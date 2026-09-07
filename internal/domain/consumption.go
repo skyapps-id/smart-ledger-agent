@@ -17,16 +17,18 @@ const (
 // Setiap siklus merepresentasikan satu periode konsumsi lengkap.
 // Direlasikan ke master goods via GoodsID — BUKAN lagi via nama barang.
 type ConsumptionCycle struct {
-	ID               int64                  `gorm:"primaryKey;autoIncrement" json:"id"`
-	ChatID           string                 `gorm:"size:64;index" json:"chat_id"`
-	GoodsID          int64                  `gorm:"index" json:"goods_id"`
-	Good             *Good                  `gorm:"foreignKey:GoodsID" json:"good,omitempty"`
-	BatchNumber      string                 `gorm:"size:64;index" json:"batch_number,omitempty"` // untuk tracking per batch
-	StartDate        time.Time              `gorm:"type:date;index" json:"start_date"`
-	EndDate          *time.Time             `gorm:"type:date" json:"end_date,omitempty"`
-	PurchaseQty      float64                `gorm:"type:numeric(12,2)" json:"purchase_qty"`
-	PurchaseUnit     string                 `gorm:"size:32" json:"purchase_unit"`
-	ConversionFactor float64                `gorm:"type:numeric(10,4)" json:"conversion_factor"` // factor ke satuan terkecil (gr/ml)
+	ID          int64      `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID      string     `gorm:"size:64;index" json:"chat_id"`
+	GoodsID     int64      `gorm:"index" json:"goods_id"`
+	Good        *Good      `gorm:"foreignKey:GoodsID" json:"good,omitempty"`
+	BatchNumber string     `gorm:"size:64;index" json:"batch_number,omitempty"` // untuk tracking per batch
+	StartDate   time.Time  `gorm:"type:date;index" json:"start_date"`
+	EndDate     *time.Time `gorm:"type:date" json:"end_date,omitempty"`
+	// InventoryQty/InventoryUnit mencatat qty & satuan pengambilan stok dari
+	// inventory (satuan stok) saat aksi "pakai" — bukan data pembelian.
+	InventoryQty     float64                `gorm:"type:numeric(12,2)" json:"inventory_qty"`
+	InventoryUnit    string                 `gorm:"size:32" json:"inventory_unit"`
+	ConversionFactor float64                `gorm:"type:numeric(10,4)" json:"conversion_factor"` // faktor master verbatim (1 uom = faktor conversion_uom, mis. 15 lt per galon)
 	ConsumedQty      float64                `gorm:"type:numeric(12,2)" json:"consumed_qty"`
 	ConsumedUnit     string                 `gorm:"size:32" json:"consumed_unit"`
 	Status           ConsumptionCycleStatus `gorm:"size:16;default:'active'" json:"status"`

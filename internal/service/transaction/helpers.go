@@ -32,6 +32,15 @@ func resolveCategory(ctx context.Context, goodsRepo repository.GoodsRepository, 
 	return extracted
 }
 
+// unitPrice menghitung harga beli satuan (amount/qty); 0 bila tidak bisa
+// dihitung (amount 0 atau qty 0) — caller fallback ke tampilan total.
+func unitPrice(amount, qty float64) float64 {
+	if amount > 0 && qty > 0 {
+		return amount / qty
+	}
+	return 0
+}
+
 // ── Date parsing helpers ──
 
 // parseTransactionDate mengubah string tanggal dari ekstraksi LLM ke time.Time.
@@ -127,10 +136,15 @@ func repurchaseAnalysis(newTxnDate time.Time, last *domain.Transaction) string {
 		return ""
 	}
 	avgDaily := last.Amount / days
+	detail := fmt.Sprintf("Rp%s (%s)", agent.FormatRupiah(last.Amount), last.TransactionDate.Format("02/01"))
+	if last.UnitPrice > 0 && last.Quantity > 0 && last.Unit != "" {
+		detail = fmt.Sprintf("Rp%s/%s x%g = Rp%s (%s)",
+			agent.FormatRupiah(last.UnitPrice), last.Unit, last.Quantity,
+			agent.FormatRupiah(last.Amount), last.TransactionDate.Format("02/01"))
+	}
 	return fmt.Sprintf(
-		" Analisa beli ulang: %s sebelumnya Rp%s (%s) bertahan %s → rata-rata Rp%s/hari.",
-		last.ItemName, agent.FormatRupiah(last.Amount),
-		last.TransactionDate.Format("02/01"),
+		" Analisa beli ulang: %s sebelumnya %s bertahan %s → rata-rata Rp%s/hari.",
+		last.ItemName, detail,
 		formatDuration(days), agent.FormatRupiah(math.Round(avgDaily)),
 	)
 }

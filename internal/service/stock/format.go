@@ -26,6 +26,14 @@ func formatStock(items []domain.Inventory, itemFilter string, lastPurchases map[
 	}
 	for _, it := range items {
 		if last, ok := lastPurchases[it.Name()]; ok && last != nil {
+			// Harga satuan (unit_price) lebih berguna untuk perbandingan
+			// antar pembelian; fallback ke total untuk row lama tanpa kolom.
+			if last.UnitPrice > 0 && last.Unit != "" {
+				fmt.Fprintf(&b, "- %s: %g %s (beli terakhir: Rp%s/%s, %s)\n",
+					it.Name(), it.StockQty, it.Unit,
+					agent.FormatRupiah(last.UnitPrice), last.Unit, last.TransactionDate.Format("02/01"))
+				continue
+			}
 			fmt.Fprintf(&b, "- %s: %g %s (beli terakhir: Rp%s, %s)\n",
 				it.Name(), it.StockQty, it.Unit,
 				agent.FormatRupiah(last.Amount), last.TransactionDate.Format("02/01"))

@@ -124,6 +124,20 @@ func TestFormatStockWithLastPurchase(t *testing.T) {
 		t.Errorf("harga beli terakhir tidak muncul: %s", response)
 	}
 
+	// Row dengan unit_price → tampilkan harga satuan, bukan total.
+	lastUnit := &domain.Transaction{
+		ItemName:        "pepmpes isi 48",
+		Amount:          192000,
+		Quantity:        3,
+		Unit:            "ball",
+		UnitPrice:       64000,
+		TransactionDate: time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+	}
+	response = formatStock(items, "susu bmt 800g", map[string]*domain.Transaction{"susu bmt 800g": lastUnit})
+	if !strings.Contains(response, "beli terakhir: Rp64.000/ball, 31/08") {
+		t.Errorf("harga satuan tidak muncul: %s", response)
+	}
+
 	response = formatStock(items, "susu bmt 800g", nil)
 	if strings.Contains(response, "beli terakhir") {
 		t.Errorf("tanpa lastPurchases tidak boleh ada info harga: %s", response)

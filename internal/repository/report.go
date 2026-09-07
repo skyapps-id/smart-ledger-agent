@@ -20,10 +20,12 @@ func (r *transactionRepo) Summary(ctx context.Context, chatID string, from, to t
 		Total    float64
 	}
 	var rows []row
+	// Laporan memakai transaction_date (tanggal transaksi, bisa backdate
+	// "kemarin"/"31 agustus"), BUKAN created_at (waktu pesan dicatat).
 	err := r.db.WithContext(ctx).
 		Model(&domain.Transaction{}).
 		Select("type, category, COALESCE(SUM(amount), 0) as total").
-		Where("chat_id = ? AND amount > 0 AND created_at >= ? AND created_at <= ?", chatID, from, to).
+		Where("chat_id = ? AND amount > 0 AND transaction_date >= ? AND transaction_date <= ?", chatID, from, to).
 		Group("type, category").
 		Scan(&rows).Error
 	if err != nil {
@@ -52,7 +54,7 @@ func (r *transactionRepo) Summary(ctx context.Context, chatID string, from, to t
 	var count int64
 	if err := r.db.WithContext(ctx).
 		Model(&domain.Transaction{}).
-		Where("chat_id = ? AND created_at >= ? AND created_at <= ?", chatID, from, to).
+		Where("chat_id = ? AND transaction_date >= ? AND transaction_date <= ?", chatID, from, to).
 		Count(&count).Error; err != nil {
 		return nil, err
 	}
@@ -68,7 +70,7 @@ func (r *transactionRepo) ExpenseByItem(ctx context.Context, chatID string, from
 	err := r.db.WithContext(ctx).
 		Model(&domain.Transaction{}).
 		Select("item_name, SUM(amount) as amount, COUNT(*) as count").
-		Where("chat_id = ? AND type = ? AND amount > 0 AND created_at >= ? AND created_at <= ?",
+		Where("chat_id = ? AND type = ? AND amount > 0 AND transaction_date >= ? AND transaction_date <= ?",
 			chatID, domain.TransactionExpense, from, to).
 		Group("item_name").
 		Order("amount DESC").

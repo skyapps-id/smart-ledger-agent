@@ -11,14 +11,16 @@ A WhatsApp-based assistant for tracking personal expenses and inventory. Just ch
 - **🤖 LLM-Based Intelligence.** Smart routing via LLM intent classification — handles typos, variations, and natural language automatically. No rigid patterns required.
 - **Chat = Ledger.** Each chat (DM or group) is an independent ledger. Groups share one ledger among members; DMs are personal.
 - **Natural Language Processing.** Type `beli kopi 15rb`, `cek stock kecap`, atau `analisa konsumsi bulan ini` → LLM understands intent and extracts structured parameters automatically.
-- **💰 Real-Time Cost Tracking.** Every WhatsApp reply displays exact LLM cost with transparent breakdown. Monitor spending per operation with microdollar precision.
-- **🚀 Token Optimization.** Intelligent search reduces LLM context by 60-90% using PostgreSQL ILIKE pattern matching. Category summaries minimize WhatsApp reply tokens.
-- **Automatic Inventory Management.** Physical-goods expenses automatically increase inventory; stock consumption automatically decreases it with smart tracking.
-- **Consumption Cycle Tracking.** Track per-item usage from start to finish — auto-generated batch numbers, daily rate calculation in correct units (grams/ml), full consumption history with multi-batch support.
-- **Smart Consumption Module.** Advanced consumption tracking with proper unit detection (ml for liquids, gr for solids), batch management, usage completion tracking, and detailed consumption analytics.
-- **Financial Tracking.** Income, expenses, opening balance — all automatically categorized with LLM-powered classification.
-- **🔍 Smart Search & Categorization.** ILIKE pattern matching finds relevant inventory items (1-5 results). Category summaries provide compact overviews for efficient token usage.
-- **Context-Aware.** LLM receives targeted inventory search results to resolve ambiguous item names (`susu` → `susu uht`) with minimal token overhead.
+- **📦 Goods Master (master-first).** Every item lives in a per-chat `goods` catalog — the single source of names, canonical units (uom), categories, conversion factors, and the stock flag (`affects_stock`). Transactions/inventory/consumption resolve by `goods_id`; unknown items are rejected with registration guidance (no auto-create, no hallucinated names).
+- **⚖️ UOM from master, never from the LLM.** Conversion is defined once (`set 1 galon 15lt`) and applied everywhere: stock units, consumption cycles (stored verbatim — 15 lt, not 15000 ml), and usage conversion (`pakai 3lt` → 0.2 galon). No factor registered? The item simply lives in its stock unit (galon → galon, factor 1).
+- **🏷️ Canonical categories.** Category is fixed on the master row — LLM classification can never drift it. `tambah barang` without a category gets a keyword-based suggestion (correctable via `set kategori`).
+- **🚦 Stock flag from master.** Whether a purchase adds stock is decided once per item on the master (`affects_stock`), never per message by the LLM. Physical stored goods (`gas lpg`, `galon`) stock up; services/fuel (`listrik`, `bensin`) never do — correctable via `set stok [barang] ya|tidak`.
+- **💰 Real-Time Cost Tracking.** Every WhatsApp reply displays exact LLM cost. Two LLM hops max (intent + extraction), constant prompt size — no per-message catalog injection.
+- **Automatic Inventory Management.** Physical-goods expenses increase stock in the master's unit; consumption decreases it via master factors with batch tracking and daily-rate analytics.
+- **Consumption Cycle Tracking.** Per-batch usage from start to finish — auto-generated batch numbers, multi-batch support, history and rate in the master's conversion unit.
+- **Financial Tracking.** Income, expenses, opening balance — category comes from the master (keyword-suggested at `tambah barang`, correctable anytime via `set kategori`).
+- **🔍 DB-side name resolution.** Ambiguous names (`susu` → uht/bmt) resolved by exact → LIKE → original-message filter, with numbered confirmation when needed — zero extra prompt tokens.
+- **✅ Deterministic Writes.** LLM only routes intents and extracts text verbatim; every DB write is owned by deterministic code.
 - **Smart Date Handling.** Various date formats supported: "kemarin", "01/08/2026", "01/08", "11-08" — LLM extracts and parses automatically, with today's date injected at runtime ([KONTEKS WAKTU]) so relative dates and short dates are never hallucinated.
 - **🧭 End-to-End Task Tracing.** Every message gets a Task ID at the webhook (`X-Task-ID` response header) that correlates all logs across handler → worker → orchestrator → sub-agents → reply, with per-step cost/duration and a one-line trace summary.
 - **Group Anti-Spam.** Bot only responds when @-mentioned in groups, preventing unwanted messages.
@@ -42,8 +44,9 @@ flowchart LR
     O --> A3[ConsumptionAgent]
     O --> A4[ReportAgent]
     O --> A5[SystemAgent]
+    O --> A6[GoodsAgent]
     A1 -->|read / write| DB[(PostgreSQL)]
-    A1 & A2 & A3 & A4 & A5 -->|reply via| CAP[sender.Capture<br/>records per task id]
+    A1 & A2 & A3 & A4 & A5 & A6 -->|reply via| CAP[sender.Capture<br/>records per task id]
     CAP -->|webhook msgs| S{{WAHA Sender Queue<br/>sequential}}
     S --> T[WAHA Sender Worker<br/>single worker]
     T -->|2-5s delay| U2[Rate Limited Sender]
@@ -138,86 +141,70 @@ flowchart TD
     F --> G[🤖 LLM Intent Classification]
     G --> H{Action?}
 
-    H -- record_transaction --> I1[Keyword Extraction<br/>+ ILIKE Search]
-    
-    I1 --> J[🤖 LLM #2: Transaction Extraction<br/>+ relevant inventory 1-5 items]
+    H -- record_transaction --> I1[🤖 LLM #2: Extraction<br/>verbatim — NO context injection]
 
     subgraph DB[Database]
-        DB0[(goods)]
+        DB0[(goods<br/>master: nama/uom/kategori/faktor)]
         DB1[(transactions)]
         DB2[(inventory)]
         DB3[(stock_logs)]
         DB4[(consumption_cycles)]
     end
 
-    J -- INCOME --> DB0 & DB1
-    J -- EXPENSE --> DB0 & DB1 & DB2 & DB3
-    J -- CONSUMPTION --> DB2 & DB3 & DB4
+    I1 -- "INCOME / EXPENSE" --> RG{agent.ResolveGoods<br/>exact → LIKE → msg-filter}
+    RG -- "tidak ada" --> RJ[❌ reject: "daftarkan dulu<br/>(tambah barang ...)"]
+    RG -- ambigu --> RC[🔢 pilih nomor<br/>(resume tanpa LLM hop)]
+    RG -- ketemu --> J2[kategori & satuan stok<br/>dari master]
+    J2 --> DB0 & DB1
+    J2 -- "flag master affects_stock" --> DB2 & DB3
+    I1 -- CONSUMPTION --> DB2 & DB3 & DB4
 
-    H -- consumption --> I2[Consumption cycle ops<br/>use / update / complete / list]
+    H -- consumption --> I2[ConvertUsage via faktor master<br/>use / update / complete / list]
     I2 --> DB4 & DB2 & DB3
 
-    H -- get_stock --> I3[Category Summary<br/>or ILIKE Search]
+    H -- goods --> I6[Master ops: add / list / info<br/>set_factor / set_uom / set_category]
+    I6 --> DB0
+
+    H -- get_stock --> I3[Category Summary<br/>(kategori master) / search]
     I3 --> DB2
     H -- get_report --> I4[Aggregate transactions]
     I4 --> DB1
     H -- init/help/info/none --> I5[Template / metadata]
 
-    DB1 & DB2 & DB3 & DB4 & I5 --> R
+    DB1 & DB2 & DB3 & DB4 & RJ & I5 --> R
     R[📝 Format reply + Cost] --> S[📤 WAHA Queue rate-limited 2-5s]
     S --> T[📱 Reply delivered]
 ```
 
-### Inventory Context & Search Optimization
+### Master-First Name Resolution (no context injection)
 
-Before every LLM extraction, the agent uses intelligent search to find only relevant inventory items and injects them into the system prompt. This allows the LLM to resolve ambiguous item names (e.g., `susu` → `susu uht`) while minimizing token usage.
+The LLM never receives a catalog — extraction prompts are constant-size, and item names are matched **after** extraction via indexed DB queries (`agent.ResolveGoods`):
 
-| Component | Detail |
+```
+"beli susu bmt"  →  exact match (case-insensitive)  →  hit ✅
+                 →  LIKE '%susu bmt%' (max 5)        →  1 result → use it
+                 →  several candidates              →  filter by original message
+                 →  still ambiguous                  →  🔢 numbered choice ("1"/"2" resumes without an LLM hop)
+                 →  nothing                          →  ❌ reject: "daftarkan dulu: tambah barang X satuan [u]"
+```
+
+| Property | Detail |
 | :--- | :--- |
-| **Search optimization** | ILIKE pattern matching in PostgreSQL (max 5 results) |
-| **Keyword extraction** | Removes stopwords/action words, keeps item names |
-| **Fallback logic** | General queries → full inventory, specific → search results |
-| **Context injection** | Only relevant items (1-5) vs all items (20) before |
-| **Token savings** | 60-90% reduction per extraction request |
-| **Cache library** | [`patrickmn/go-cache`](https://github.com/patrickmn/go-cache) — in-memory, zero infrastructure |
-| **Cache TTL** | 5 minutes with 10-minute cleanup interval |
-| **Invalidation** | Write-through — cached entry deleted on every `AddStock` / `DecreaseStock` |
-
-**Search Strategy:**
-- Specific queries ("beli kecap") → ILIKE search → 1-2 items (~100 tokens)
-- General queries ("barang saya apa aja") → Fallback to all items (~1000 tokens)
-- Average savings: ~70% per extraction request
+| **Prompt tokens** | Constant — the extraction prompt never grows with the catalog |
+| **Matching** | `LOWER(...) LIKE` on `goods.name` (index-backed, per chat) |
+| **Ambiguity** | Numbered confirmation via `PendingConfirms` (TTL 5m) on buy/use/goods paths |
+| **Unknown items** | Rejected with guidance — no auto-create, no hallucinated names |
+| **Cache** | None needed — one indexed query per resolution |
 
 ### 🚀 Token Optimization Strategy
 
 The system implements multiple optimization strategies to minimize LLM token usage and operational costs:
 
-#### **1. Database-First Search (LLM Context Optimization)**
-Instead of loading entire inventory into every LLM request, the system uses PostgreSQL ILIKE pattern matching:
+#### **1. Zero Context Injection**
+Extraction prompts contain no catalog snapshot at all — the LLM copies item names verbatim from the message, and matching happens afterwards via indexed DB queries (`ResolveGoods`). Prompt size is **constant** regardless of how many items the chat has registered.
 
-```go
-// Before: Load 20 items → 1000+ tokens
-// After: Search 1-5 items → 100-250 tokens
-items := invRepo.SearchByName(chatID, "kecap")
-```
-
-**Benefits:**
-- 60-90% token reduction for specific queries
-- Better accuracy (LLM sees only relevant items)
-- Scalable to 100+ inventory items
-
-#### **2. Intelligent Keyword Extraction**
-The system extracts relevant keywords from user messages, filtering out:
-- **Stopwords**: yang, dan, atau, untuk, dengan
-- **Action words**: beli, pakai, ambil, transfer
-- **Quantity words**: rb, jt, pcs, k
-
-**Example:**
-```
-"beli kecap 250ml" → ["kecap", "250ml"]
-"stok susu uht" → ["susu", "uht"]
-"barang saya apa aja" → [] (triggers full inventory)
-```
+#### **2. Lean Prompts**
+The transaction prompt carries no unit-conversion rules (master owns conversions), no consumption-analysis fields, no affects_stock rules (the master's stock flag decides), and only 9 compact examples. The LLM never performs unit math.
 
 #### **3. Category-Based Summarization (WhatsApp Display Optimization)**
 For general stock queries, the system provides category summaries instead of raw item lists:
@@ -243,10 +230,10 @@ The system automatically detects query patterns and applies optimal strategies:
 
 | Query Pattern | Strategy | Result |
 |---------------|----------|--------|
-| `"stok kecap"` | ILIKE search → 1-2 items | Specific results |
-| `"stok minuman"` | Category search → 4-6 items | Category filtering |
-| `"stok"` | Category summary | Compact overview |
-| `"barang saya apa aja"` | Full inventory | Complete list |
+| `"stok kecap"` | LIKE search on goods/inventory (1-5) | Specific results |
+| `"stok"` | Category summary from `goods.category` | Compact overview |
+| `"stok galon"` (registered, never bought) | Master lookup | "0 galon (terdaftar, belum pernah dibeli)" |
+| `"stok kecap"` (not registered) | Master lookup | Reject + `tambah barang` guidance |
 
 #### **5. Real-Time Cost Tracking**
 Every operation includes transparent cost reporting:
@@ -280,37 +267,42 @@ The intent classifier evaluates messages top-down and stops at the first match:
 
 | Priority | Keyword / Pattern | Action | Examples |
 |----------|-------------------|--------|----------|
-| 1 | `pakai` / `terpakai` | `consumption` (use / update) | `"pakai susu uht 500ml"`, `"terpakai susu (AUG-12-152714) 100ml"` |
-| 2 | `konsumsi` | `consumption` (list / info) | `"konsumsi"`, `"konsumsi susu"`, `"konsumsi list"` |
-| 3 | `init` / `help` / `info` | `init` / `help` / `info` | `"init"`, `"bantuan"`, `"info"` |
-| 4 | `beli` / `bayar` / money amount | `record_transaction` | `"beli kopi 15rb"`, `"bayar listrik 200rb"` |
-| 5 | `stok` / `stock` / `sisa` / `persediaan` | `get_stock` | `"stok kecap"`, `"sisa air"`, `"persediaan"` |
-| 6 | `pengeluaran` / `pemasukan` / `laporan` | `get_report` | `"pengeluaran hari ini"`, `"ringkasan kemarin"` |
-| 7 | No match | `none` | `"halo"`, `"pagi"`, chitchat |
+| 1 | `pakai` / `dipakai` / `ambil` | `consumption` (use) | `"pakai beras 1 kg"` |
+| 2 | `terpakai` | `consumption` (update, needs batch) | `"terpakai susu (AUG-12-152714) 100ml"` |
+| 3 | `habis` | `consumption` (complete) | `"susu uht 500ml sudah habis"` |
+| 4 | `konsumsi` / `pemakaian` / `barang aktif` | `consumption` (info / list / history) | `"konsumsi susu"` |
+| 5 | `init` / `bantuan` / `info` | `init` / `help` / `info` | `"init dompetku"` |
+| 6 | `beli` / `bayar` / `jual` / money amount | `record_transaction` | `"beli kopi 15rb"` |
+| 7 | `master barang` / `tambah barang` / `set ...` | `goods` | `"set 1 galon 15lt"`, `"tambah barang beras satuan kg"`, `"set stok gas ya"` |
+| 8 | `stok` / `sisa` / `persediaan` | `get_stock` | `"stok kecap"` |
+| 9 | `pengeluaran` / `pemasukan` / `laporan` | `get_report` | `"ringkasan kemarin"` |
+| 10 | No match | `none` | `"halo"`, chitchat |
 
 **Disambiguation examples:**
-- `"beli stok kecap 50rb"` → `record_transaction` (not `get_stock`, because `beli` + money wins)
-- `"analisa konsumsi susu"` → `consumption` (not `get_report`, because `konsumsi` is higher priority)
+- `"beli stok kecap 50rb"` → `record_transaction` (`beli` + money wins over `stok`)
+- `"master barang"` → `goods` (not `get_stock`, even though both mention "barang")
+- `"harga beli terakhir susu"` → `get_stock` (`harga` beats `beli`)
 
 #### Implementation Details
 
 **1. Intent Classification Prompt (`intentSystemPrompt`)**
 - Lives in `internal/service/orchestrator/prompt.go` — owned by the orchestrator, not the transport layer
-- Classifies user messages into actions: `init`, `help`, `info`, `get_stock`, `get_report`, `consumption`, `record_transaction`, `none`
+- Classifies user messages into actions: `init`, `help`, `info`, `goods`, `get_stock`, `get_report`, `consumption`, `record_transaction`, `none`
 - Extracts structured parameters (e.g., `item_filter: "kecap"`, `consumption_action: "info"`)
 - Handles typo tolerance and natural language variations
 - Today's date is appended at runtime (`llm.TimeContext`) so relative dates and short dates ("11/08") resolve correctly
 
 **2. Transaction Extraction Prompt (`transactionSystemPrompt`)**
 - Lives in `internal/service/transaction/prompt.go` — the only other prompt actually sent to the LLM (2nd hop)
-- Explicit rules for GROSIR vs KEMASAN size handling, amount formats (`50rb`/`1.5jt`), and date extraction
+- GROSIR vs KEMASAN naming, amount formats (`50rb`/`1.5jt`), dates — and NO unit-conversion or affects_stock rules: names and units are copied verbatim, the master owns all conversions and the stock flag
 
 **3. Service Handlers (per-domain agents)**
 - `handleInitAction()` - Ledger initialization (system)
-- `handleGetStock()` - Stock queries with filtering (stock)
+- `handleGetStock()` - Stock queries, master-aware fallback (stock)
 - `handleGetReport()` - Financial reports & analysis (report)
-- `handleConsumptionAction()` - Consumption cycle management (consumption)
-- `handleRecordTransaction()` - Transaction recording via LLM extraction (transaction)
+- `handleConsumptionAction()` - Consumption cycles via master factors (consumption)
+- `handleRecordTransaction()` - Master-first transaction recording (transaction)
+- `handleGoodsAction()` - Master CRUD: add / list / info / set_factor / set_uom / set_category (goods)
 
 **4. Extensibility**
 Adding a new domain requires:
@@ -361,6 +353,7 @@ erDiagram
         varchar(128) name "single source of item names"
         varchar(32) uom "canonical unit (galon, pcs...)"
         varchar(32) category "canonical category, fixed per item"
+        bool affects_stock "flag barang berstok (default) vs jasa/BBM"
         varchar(32) conversion_uom "1 uom = factor_uom conversion_uom"
         numeric(12,3) factor_uom "learned/curated conversion"
         timestamptz created_at
@@ -375,7 +368,11 @@ erDiagram
         varchar(32) category
         varchar(128) item_name "denormalized display snapshot"
         numeric amount
+        numeric quantity "snapshot qty beli"
+        varchar(32) unit
+        numeric unit_price "harga beli satuan (amount/qty)"
         text raw_payload
+        date transaction_date "bisa beda dari created_at (kemarin, 01/08)"
         timestamptz created_at
     }
     inventory {
@@ -401,11 +398,11 @@ erDiagram
         varchar(64) batch_number "auto-generated"
         date start_date
         date end_date "nullable"
-        numeric purchase_qty
-        varchar(32) purchase_unit
-        numeric conversion_factor "to gr/ml"
+        numeric inventory_qty "qty pengambilan stok (satuan stok)"
+        varchar(32) inventory_unit "satuan stok"
+        numeric conversion_factor "faktor master verbatim (mis. 15 lt per galon)"
         numeric consumed_qty
-        varchar(32) consumed_unit
+        varchar(32) consumed_unit "satuan master verbatim (mis. lt)"
         varchar(16) status "active/completed"
         text notes
         timestamptz created_at
@@ -420,7 +417,8 @@ erDiagram
 - **Relation by id, not name.** `inventory`, `consumption_cycles`, and `transactions` reference `goods_id`; `transactions.item_name` is kept only as a denormalized display snapshot for reports.
 - **Check-first (no auto-create).** Transactions resolve items via `agent.ResolveGoods` (exact → LIKE → original-message filter); items not in the master are REJECTED with guidance to register first (`"tambah barang [x] satuan [u]"`). Explicit registration goes through `GoodsRepository.GetOrCreateByName` (case-insensitive, slug code, unique per `chat_id + code`).
 - **Canonical category.** `category` on the goods row wins over per-transaction LLM classification — once set (explicitly or seeded from the first purchase), it never drifts. `GetCategorySummary` reads it for stock overviews.
-- **UOM conversion factors.** `uom` = canonical unit, `conversion_uom` + `factor_uom` = conversion learned from the chat's users (e.g. "1 galon = 15 lt" from a "15lt" answer). Learned factors are stored on the chat's goods row, so subsequent usage in the same chat converts stably — prompts never invent conversion factors.
+- **Stock flag on the master.** `affects_stock` lives on the goods row — physical stored goods (`galon`, `gas lpg`) add stock on purchase; services/fuel (`listrik`, `bensin`) never do. The LLM no longer decides this per transaction; `tambah barang` applies a keyword heuristic (correctable via `set stok [barang] ya|tidak`).
+- **UOM conversion factors.** `uom` = canonical unit, `conversion_uom` + `factor_uom` = conversion registered explicitly by the chat's users (`set 1 galon 15lt`, or inline at `tambah barang galon satuan galon, 1 galon = 15lt`). Factors are stored on the chat's goods row, so subsequent usage in the same chat converts stably — prompts never invent conversion factors.
 - **Name resolution via DB query (no context injection).** LLM-facing contracts still use `item_name` strings and the LLM extracts names verbatim; matching happens post-extraction via `agent.ResolveGoods` (exact → LIKE → original-message filter) — zero extra prompt tokens.
 
 Tables are created automatically via GORM `AutoMigrate` on application start. Adding a new struct field → new column is added automatically (existing columns are not dropped).
@@ -508,13 +506,28 @@ cek sisa susu di rumah          # natural language query
 | `info` | Show session metadata (chat_id, sender, status, name, transaction count) |
 | `bantuan` | Show the recording-format guide |
 
-### Transaction Recording
+### Master Barang (goods) — register first, everything else follows
 ```
-beli kopi 15rb                              # → EXPENSE: coffee 15k
-gaji masuk 10jt                             # → INCOME: salary 10M
-beli susu UHT 1 dus isi 50pcs harga 500rb   # → EXPENSE + stock addition
-ambil susu 2 pcs                            # → CONSUMPTION: stock decrease
-saldo awal 5jt                              # → INCOME: opening balance
+tambah barang galon air satuan galon, 1 galon = 15lt, kategori MINUMAN
+tambah barang bensin satuan liter kategori TRANSPORT   # kategori opsional (disarankan otomatis)
+master barang                                           # daftar + faktor
+info barang galon air                                   # detail + stok
+set 1 galon air 15lt                                    # ubah faktor konversi
+set satuan beras jadi kg                                # ubah satuan kanonik
+set kategori galon air jadi MINUMAN                     # kategori permanen
+set stok gas lpg 3kg ya                                 # pembelian menambah stok
+set stok bensin tidak                                   # jasa/BBM: hanya catat keuangan
+tambah barang bensin satuan liter non stok              # daftar langsung non-stok
+```
+
+### Transaction Recording (items must exist in the master)
+```
+tambah barang kopi satuan sachet          # 1. daftar dulu (master-first)
+beli kopi 10sachet 15rb                   # 2. EXPENSE + stok, kategori dari master
+gaji masuk 10jt                           # INCOME (juga butuh barang "gaji" terdaftar)
+ambil kopi 1 sachet                       # CONSUMPTION: stok berkurang
+saldo awal 5jt                            # INCOME: opening balance
+beli barang asing 20rb                    # ❌ ditolak: "daftarkan dulu: tambah barang ..."
 ```
 
 ### Stock Queries (optimized for token efficiency)
@@ -533,15 +546,15 @@ barang saya apa aja                         # → Show category summary
 - Specific query ("stok kecap") → Search results (~100 tokens vs ~1500 before)
 - Overall savings: 60-90% per stock query
 
-### Consumption Tracking
+### Consumption Tracking (units converted via master factors)
 ```
 konsumsi                                    # → Shows all active consumption cycles
-konsumsi list                               # → Same as above (explicit)
-konsumsi susu uht 500ml                     # → Shows consumption info for specific item
-pakai susu uht 500ml                        # → Record usage, start new cycle
-pakai susu uht 500ml 05/08                  # → Record usage with custom date (DD/MM or DD/MM/YYYY)
-terpakai susu uht 500ml (AUG-12-152714) 100ml  # → Correct consumed amount for a batch
-susu uht 500ml sudah habis                  # → Complete consumption cycle with analytics
+konsumsi susu                               # → Consumption info for specific item
+pakai galon air                             # → 1 satuan stok (galon), cycle baru
+pakai galon air 3lt                         # → dikonversi via faktor master: 3/15 = 0.2 galon
+pakai galon air 3kg                         # → ❌ "Satuan 'kg' tidak dikenali... sebut dalam galon atau lt"
+terpakai galon air (SEP-07-105204) 5lt      # → Correct consumed amount for a batch
+galon air sudah habis                       # → Complete cycle + rate/hari (satuan master)
 barang aktif                                # → Lists all items currently being consumed
 ```
 
@@ -570,7 +583,7 @@ smart-ledger-agent/
 │   │   ├── webhook.go          # WAHA webhook + Task ID generation
 │   │   ├── dev.go              # POST /dev/message test endpoint (dev mode)
 │   │   └── health.go
-│   ├── llm/                    # OpenAI-compatible client + prompt builders (TimeContext, Inventory)
+│   ├── llm/                    # OpenAI-compatible client + prompt builders (TimeContext)
 │   ├── repository/
 │   │   ├── model/              # query-result DTOs (TxnSummary, ItemBreakdown, StockMovement)
 │   │   ├── chat.go
@@ -585,7 +598,7 @@ smart-ledger-agent/
 │   │   ├── sender.go           # sequential WAHA sender worker + rate limit
 │   │   └── capture.go          # per-task reply capture (dev endpoint)
 │   ├── service/
-│   │   ├── agent/              # SubAgent contract, Request, reply helpers, Task tracing, templates
+│   │   ├── agent/              # SubAgent contract, ResolveGoods/ResolveInventoryItem, PendingConfirms, Task tracing, templates
 │   │   ├── orchestrator/       # intent classification + dispatch (domain-agnostic)
 │   │   ├── transaction/        # record_transaction agent + extraction prompt
 │   │   ├── stock/              # get_stock agent
@@ -669,7 +682,7 @@ Each agent owns its prompt in its own package (`prompt.go`) — the transport la
 4. Test with `go test -v ./internal/service/... -run TestYourNewFeature` or via `/dev/message`
 
 **Consumption Module Integration:**
-- Automatic unit detection: `determineSmallestUnit()` identifies ml vs gr based on item names
+- Master-factor conversion: `ConvertUsage()` converts usage to the stock unit strictly from the registered master factor (same unit → as-is; conversion unit → qty/factor; anything else → guidance reply listing accepted units)
 - Multi-batch support: Track multiple consumption cycles for the same item
 - Smart completion: `handleConsumptionAction()` with info, list, use, complete actions
 - Enhanced LLM prompts: Comprehensive consumption query patterns
@@ -679,8 +692,8 @@ Each agent owns its prompt in its own package (`prompt.go`) — the transport la
 - **JSON Format**: Always request structured JSON output
 - **Examples**: Provide 3-5 input → output examples
 - **Error Handling**: Define behavior for invalid inputs
-- **Context Injection**: Include relevant context (inventory, history)
-- **Unit Awareness**: Consider liquid vs solid items when extracting quantities
+- **Zero Context Injection**: Keep prompts constant-size — match item names post-extraction via DB queries (`ResolveGoods`), never inject the catalog
+- **Unit Verbatim**: LLM copies names/units verbatim; the goods master owns all conversions
 
 **Monitoring LLM Performance:**
 ```bash
@@ -749,8 +762,8 @@ tail -f logs/app.log | grep -E "worker|queue|retry"
 | LLM Provider | Z.AI (GLM) |
 | LLM Model | GLM-5.3-Flash (default) |
 | Intent Classification | Custom LLM-based routing |
-| Consumption Tracking | Auto-generated batch numbers, smart unit detection (ml/gr) |
-| Cache | `patrickmn/go-cache` (in-memory) |
+| Consumption Tracking | Auto-generated batch numbers, conversion via goods-master factors |
+| Pending Confirmations | `patrickmn/go-cache` (in-memory, TTL 5m — numbered goods/batch choices) |
 | Container | Docker + Docker Compose |
 | Logging | `log/slog` (stdlib) |
 | Testing | Go testing + Mock objects |
@@ -858,6 +871,7 @@ Z.AI's context cache provides automatic cost savings:
 ## 📚 Documentation
 
 - **[`RFC/RFC.md`](./RFC/RFC.md)** — full architecture specification (Rev. C), including business rules, LLM JSON contract, and non-functional requirements.
+- **[`RFC/AGENTIC.md`](./RFC/AGENTIC.md)** — draft roadmap for the agentic evolution (memory, tool-calling, proactive scheduler).
 - **[`REFACTORING.md`](./REFACTORING.md)** — detailed documentation of the LLM-based routing architecture refactoring.
 
 ---
@@ -886,8 +900,11 @@ docker logs <container> 2>&1 | grep <task_id>
 ```
 You'll see every step (intent → agent → persist → reply) with cost and duration, ending in a `task selesai` summary.
 
+**Q: How does the system decide whether a purchase adds stock?**
+A: Via the `affects_stock` flag on the goods master — not the LLM. `tambah barang` sets it from an explicit "non stok" mention or a service/fuel keyword heuristic (listrik/bensin/parkir → non-stock; gas LPG stays stocked), and you can flip it anytime with `set stok [barang] ya|tidak`. Purchases of stock-managed items update inventory; non-stock items are recorded as finance-only transactions.
+
 **Q: How does the consumption module handle different units?**
-A: The system automatically detects units based on item names and packaging. "susu uht 200ml" uses milliliters, while "susu 400gr" uses grams. The `determineSmallestUnit()` function intelligently categorizes items.
+A: Units come exclusively from the goods master. Register a factor once (`set 1 galon 15lt`) and `pakai galon air 3lt` converts to 0.2 galon via `ConvertUsage()`. Without a factor, the item simply lives in its stock unit (galon → galon, factor 1). Unknown units are rejected with a hint listing the accepted units.
 
 **Q: Can I track multiple consumption cycles for the same item?**
 A: Yes! The system supports multi-batch tracking with auto-generated batch numbers (e.g., "AUG-12-135918"). Each batch is tracked independently with its own consumption analytics.

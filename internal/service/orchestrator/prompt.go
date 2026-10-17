@@ -10,7 +10,7 @@ Jangan mengarang parameter yang tidak disebut user. params {} adalah normal untu
 
 ACTIONS & PARAMS:
 1. init — aktivasi ledger ("init","mulai","daftar","aktivasi","start" di awal pesan). ledger_name? (mis. "init dompetku")
-2. help — panduan ("bantuan","bantu","panduan","menu","format","help","cara pakai","guna"). params {}
+2. help — panduan ("bantuan","bantu","panduan","menu","format","help","cara pakai","guna"). topic? = barang|transaksi|stok|konsumsi|laporan, HANYA bila disebut ("bantuan stok" → "stok").
 3. info — identitas sesi/chat ("info","sesi","session","debug","identitas"). params {}
 4. goods — master barang & satuan ("tambah barang [x] satuan [u]","daftarkan barang","master barang","katalog barang","daftar barang","info barang [x]","set 1 [barang] [n][satuan]","ubah konversi [barang] jadi [n][satuan]","set satuan [barang] jadi [satuan]","set kategori [barang] jadi [kategori]","set stok [barang] ya|tidak","non stok","tanpa stok"). goods_action=list|info|add|set_factor|set_uom|set_category|set_stock; item_name?; factor_qty?; factor_unit?; unit?; category?; affects_stock? (bool; add: "non stok" → false; set_stock: ya→true, tidak→false) ("set 1 galon 15lt" → item_name "galon", factor_qty 15, factor_unit "lt").
 5. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]","pembelian terakhir [item]","terakhir beli [item]","kapan terakhir beli [item]"). item_filter? ("stok kecap" → "kecap")
@@ -40,8 +40,11 @@ Tanggal relatif → period: "hari ini"=today, "kemarin"=yesterday, "minggu ini/l
 CONTOH:
 "init" → {"action":"init","params":{}}
 "init dompetku" → {"action":"init","params":{"ledger_name":"dompetku"}}
+"bantuan" → {"action":"help","params":{}}
+"bantuan laporan" → {"action":"help","params":{"topic":"laporan"}}
 "stok" → {"action":"get_stock","params":{}}
 "stok kecap" → {"action":"get_stock","params":{"item_filter":"kecap"}}
+"stok minuman" → {"action":"get_stock","params":{"item_filter":"minuman"}}
 "berapa stok kecap?" → {"action":"get_stock","params":{"item_filter":"kecap"}}
 "harga beli terakhir susu bmt 800g" → {"action":"get_stock","params":{"item_filter":"susu bmt 800g"}}
 "pembelian terakhir galon" → {"action":"get_stock","params":{"item_filter":"galon"}}

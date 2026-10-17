@@ -24,6 +24,7 @@ type InventoryRepository interface {
 	DecreaseStock(ctx context.Context, id int64, qty float64) error
 	ListByChat(ctx context.Context, chatID string) ([]domain.Inventory, error)
 	SearchByName(ctx context.Context, chatID, keyword string) ([]domain.Inventory, error)
+	ListByCategory(ctx context.Context, chatID, category string) ([]domain.Inventory, error)
 	GetCategorySummary(ctx context.Context, chatID string) ([]CategorySummary, error)
 }
 
@@ -127,60 +128,73 @@ func (r *inventoryRepo) SearchByName(ctx context.Context, chatID, keyword string
 	return items, err
 }
 
+// categoryKeywords adalah heuristic kategori untuk barang yang belum punya
+// kategori di master. Slice (bukan map) agar urutan cek deterministik:
+// "kopi susu" selalu jatuh ke kategori yang sama di ringkasan maupun daftar.
+var categoryKeywords = []struct {
+	category string
+	keywords []string
+}{
+	{"MINUMAN", []string{"susu", "kopi", "teh", "air", "minuman", "jus", "soda"}},
+	{"SEMBAKO", []string{"beras", "gula", "tepung", "mie", "bumbu", "minyak", "kacang", "cabe", "bawang"}},
+	{"MAKAN", []string{"roti", "biskuit", "snack", "keripik", "wafer", "coklat"}},
+	{"HARI_HARI", []string{"sabun", "detergent", "tissue", "plastik", "pembersih", "shampo", "pasta gigi"}},
+	{"POPUK", []string{"popok", "diaper", "pampers"}},
+}
+
+// itemCategory menentukan kategori satu item: kategori kanonik di master
+// goods MENANG; heuristic keyword hanya fallback, sisanya "LAINNYA".
+func itemCategory(item domain.Inventory) string {
+	if item.Good != nil && item.Good.Category != "" {
+		return item.Good.Category
+	}
+	lowerName := strings.ToLower(item.Name())
+	for _, c := range categoryKeywords {
+		for _, keyword := range c.keywords {
+			if strings.Contains(lowerName, keyword) {
+				return c.category
+			}
+		}
+	}
+	return "LAINNYA"
+}
+
+// ListByCategory mengembalikan seluruh inventory pada kategori tertentu
+// (case-insensitive; spasi dianggap "_", mis. "hari hari" → HARI_HARI).
+// Memakai aturan kategori yang sama dengan GetCategorySummary agar
+// "stok [kategori]" konsisten dengan ringkasan.
+func (r *inventoryRepo) ListByCategory(ctx context.Context, chatID, category string) ([]domain.Inventory, error) {
+	items, err := r.ListByChat(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	want := normalizeCategory(category)
+	var matched []domain.Inventory
+	for _, item := range items {
+		if normalizeCategory(itemCategory(item)) == want {
+			matched = append(matched, item)
+		}
+	}
+	return matched, nil
+}
+
+// normalizeCategory menyamakan penulisan kategori untuk perbandingan.
+func normalizeCategory(category string) string {
+	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(category)), " ", "_")
+}
+
 // GetCategorySummary mengelompokkan inventory items ke kategori sederhana
-// untuk display yang hemat tokens di WhatsApp reply.
-// Kategorisasi berdasarkan keyword analysis pada nama barang di goods.
+// untuk display yang hemat tokens di WhatsApp reply (lihat itemCategory).
 func (r *inventoryRepo) GetCategorySummary(ctx context.Context, chatID string) ([]CategorySummary, error) {
-	// Load all items for categorization
 	items, err := r.ListByChat(ctx, chatID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Simple categorization based on keywords
-	categories := map[string][]string{
-		"MINUMAN":   {"susu", "kopi", "teh", "air", "minuman", "jus", "soda"},
-		"SEMBAKO":   {"beras", "gula", "tepung", "mie", "bumbu", "minyak", "kacang", "cabe", "bawang"},
-		"MAKAN":     {"roti", "biskuit", "snack", "keripik", "wafer", "coklat"},
-		"HARI_HARI": {"sabun", "detergent", "tissue", "plastik", "pembersih", "shampo", "pasta gigi"},
-		"POPUK":     {"popok", "diaper", "pampers"},
-		"LAINNYA":   {},
-	}
-
-	// Categorize items: kategori kanonik di master goods MENANG; heuristic
-	// keyword hanya fallback untuk barang yang belum punya kategori.
 	categorized := make(map[string][]string)
 	for _, item := range items {
-		name := item.Name()
-		if item.Good != nil && item.Good.Category != "" {
-			categorized[item.Good.Category] = append(categorized[item.Good.Category], name)
-			continue
-		}
-		lowerName := strings.ToLower(name)
-		itemCategorized := false
-
-		for category, keywords := range categories {
-			if category == "LAINNYA" {
-				continue // Skip "LAINNYA" for now
-			}
-
-			for _, keyword := range keywords {
-				if strings.Contains(lowerName, keyword) {
-					categorized[category] = append(categorized[category], name)
-					itemCategorized = true
-					break
-				}
-			}
-
-			if itemCategorized {
-				break
-			}
-		}
-
-		// Kalau tidak match ke kategori manapun, masuk ke "LAINNYA"
-		if !itemCategorized {
-			categorized["LAINNYA"] = append(categorized["LAINNYA"], name)
-		}
+		category := itemCategory(item)
+		categorized[category] = append(categorized[category], item.Name())
 	}
 
 	// Build summary
@@ -203,9 +217,12 @@ func (r *inventoryRepo) GetCategorySummary(ctx context.Context, chatID string) (
 		})
 	}
 
-	// Sort by count (descending)
+	// Sort by count (descending); seri → nama kategori agar urutan stabil.
 	sort.Slice(summary, func(i, j int) bool {
-		return summary[i].Count > summary[j].Count
+		if summary[i].Count != summary[j].Count {
+			return summary[i].Count > summary[j].Count
+		}
+		return summary[i].Category < summary[j].Category
 	})
 
 	return summary, nil

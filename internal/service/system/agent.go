@@ -54,7 +54,8 @@ func (a *systemAgent) Handle(ctx context.Context, req agent.Request) error {
 		return a.handleInitAction(ctx, msg, chat, req.Action.Params, intentCost)
 
 	case domain.ActionHelp:
-		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, agent.OnboardingTemplate, intentCost)
+		topic, _ := req.Action.Params["topic"].(string)
+		return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, agent.HelpMessage(topic), intentCost)
 
 	case domain.ActionInfo:
 		return a.handleInfo(ctx, msg, chat, intentCost)

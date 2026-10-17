@@ -73,6 +73,19 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 
 	// Jika ada item filter spesifik, gunakan search approach
 	if itemFilter != "" {
+		// Filter = nama kategori ("stok minuman") → tampilkan seluruh isi
+		// kategori, konsisten dengan ringkasan kategori. Selain itu cari
+		// berdasarkan nama barang.
+		byCategory, err := a.invRepo.WithTx(a.db).ListByCategory(ctx, msg.ChatID, itemFilter)
+		if err != nil {
+			a.log.ErrorContext(ctx, "list inventory per kategori error", "err", err)
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, "Maaf, gagal mengambil data stok.", intentCost)
+		}
+		if len(byCategory) > 0 {
+			return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID,
+				formatStock(byCategory, strings.ToUpper(itemFilter), a.lastPurchases(ctx, msg.ChatID, byCategory)), intentCost)
+		}
+
 		items, err := a.invRepo.WithTx(a.db).SearchByName(ctx, msg.ChatID, itemFilter)
 		if err != nil {
 			a.log.ErrorContext(ctx, "search inventory error", "err", err)
@@ -124,7 +137,12 @@ func (a *stockAgent) handleGetStock(ctx context.Context, msg entity.IncomingMess
 	}
 
 	reply.WriteString(fmt.Sprintf("\nTotal: %d item", totalItems))
-	reply.WriteString("\n\n💡 Ketik 'stok [kategori]' untuk detail (contoh: 'stok minuman')")
+	// Contoh memakai kategori yang benar-benar ada di ledger ini.
+	example := "minuman"
+	if len(summary) > 0 {
+		example = strings.ToLower(summary[0].Category)
+	}
+	reply.WriteString(fmt.Sprintf("\n\n💡 Ketik 'stok [kategori]' untuk detail (contoh: 'stok %s')", example))
 
 	return agent.SendReplyWithCost(ctx, a.log, a.sender, msg.ChatID, reply.String(), intentCost)
 }

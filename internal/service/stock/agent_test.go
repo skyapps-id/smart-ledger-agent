@@ -227,6 +227,42 @@ func TestGetStockNonStockItemShowsLastPurchase(t *testing.T) {
 	assert.NotContains(t, senderMock.msgs[0], "belum pernah dibeli")
 }
 
+// TestGetStockByCategory: "stok minuman" menampilkan seluruh isi kategori
+// (bukan cari nama "minuman"), sedangkan nama barang tetap dicari biasa.
+func TestGetStockByCategory(t *testing.T) {
+	ag, _, senderMock := setupStockAgentTest(t)
+	ctx := context.Background()
+	for name, category := range map[string]string{"galon air": "MINUMAN", "teh botol": "MINUMAN", "beras": "SEMBAKO"} {
+		g, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", name, "pcs")
+		require.NoError(t, err)
+		require.NoError(t, ag.goodsRepo.UpdateCategory(ctx, g.ID, category))
+		_, err = ag.invRepo.AddStock(ctx, "c1", g.ID, 2, "pcs")
+		require.NoError(t, err)
+	}
+	query := func(filter string) string {
+		senderMock.msgs = nil
+		require.NoError(t, ag.Handle(ctx, agent.Request{
+			Message: stockIncoming("stok " + filter),
+			Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+			Action: domain.ServiceAction{Action: domain.ActionGetStock, Params: map[string]interface{}{
+				"item_filter": filter,
+			}},
+		}))
+		require.Len(t, senderMock.msgs, 1)
+		return senderMock.msgs[0]
+	}
+
+	reply := query("minuman")
+	assert.Contains(t, reply, "Stok saat ini (MINUMAN)")
+	assert.Contains(t, reply, "galon air: 2 pcs")
+	assert.Contains(t, reply, "teh botol: 2 pcs")
+	assert.NotContains(t, reply, "beras")
+
+	reply = query("beras")
+	assert.Contains(t, reply, "beras: 2 pcs")
+	assert.NotContains(t, reply, "galon air")
+}
+
 func TestGetStockUnknownItem(t *testing.T) {
 	ag, _, senderMock := setupStockAgentTest(t)
 

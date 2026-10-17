@@ -72,18 +72,15 @@ func parseTransactionDate(dateStr string) (time.Time, error) {
 		return parsed, nil
 	}
 
-	// Try format DD/MM (hanya hari dan bulan, tahun di-set ke 2025)
+	// Try format DD/MM (hanya hari dan bulan → tahun berjalan, sama dengan
+	// aturan prompt ekstraksi)
 	if parsed, err := time.Parse("02/01", dateStr); err == nil {
-		// Set tahun ke 2025
-		parsed = time.Date(2025, parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
-		return parsed, nil
+		return time.Date(time.Now().Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC), nil
 	}
 
-	// Try format DD-MM (hanya hari dan bulan dengan dash)
+	// Try format DD-MM (hanya hari dan bulan dengan dash → tahun berjalan)
 	if parsed, err := time.Parse("02-01", dateStr); err == nil {
-		// Set tahun ke 2025
-		parsed = time.Date(2025, parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
-		return parsed, nil
+		return time.Date(time.Now().Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC), nil
 	}
 
 	// Try format DD-MM-YY (dengan 2 digit tahun)

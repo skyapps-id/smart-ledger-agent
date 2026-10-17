@@ -49,3 +49,18 @@ func TestRepurchaseAnalysis(t *testing.T) {
 		assert.Contains(t, got, "rata-rata Rp8.333/hari")
 	})
 }
+
+// TestParseTransactionDateShortFormatUsesCurrentYear: tanggal tanpa tahun
+// ("25/08", "25-08") wajib jatuh di tahun berjalan, bukan tahun hardcode.
+func TestParseTransactionDateShortFormatUsesCurrentYear(t *testing.T) {
+	year := time.Now().Year()
+	for _, in := range []string{"25/08", "25-08"} {
+		got, err := parseTransactionDate(in)
+		assert.NoError(t, err, in)
+		assert.Equal(t, time.Date(year, 8, 25, 0, 0, 0, 0, time.UTC), got, in)
+	}
+
+	got, err := parseTransactionDate("2024-08-25")
+	assert.NoError(t, err)
+	assert.Equal(t, 2024, got.Year(), "tahun eksplisit tetap dipakai")
+}

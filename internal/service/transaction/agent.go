@@ -173,8 +173,8 @@ func (a *transactionAgent) handleIncome(ctx context.Context, msg entity.Incoming
 		return "", fmt.Errorf("catat income: %w", err)
 	}
 	return fmt.Sprintf(
-		"Pemasukan tercatat: %s sebesar Rp%s (%s).",
-		goods.Name, agent.FormatRupiah(ext.Amount), category,
+		"✅ *Pemasukan tercatat*\n%s — *Rp%s*%s",
+		goods.Name, agent.FormatRupiah(ext.Amount), categoryLine(category),
 	), nil
 }
 
@@ -308,7 +308,7 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		// Jika amount=0 tapi stok terupdate, berarti ini inventory-only update
 		if ext.Amount == 0 {
 			return fmt.Sprintf(
-				"Stok tercatat: %s +%g %s. Stok saat ini: %g %s.",
+				"✅ *Stok tercatat*\n%s +%g %s\n📦 Stok: %g %s",
 				goods.Name, ext.Quantity, stockUnit,
 				inv.StockQty, inv.Unit,
 			), nil
@@ -317,23 +317,17 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 		// Barang stok: cukup pembanding harga beli sebelumnya, tanpa
 		// analisa beli ulang — laju pemakaiannya dihitung modul consumption.
 		return fmt.Sprintf(
-			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
+			"✅ *Pengeluaran tercatat*\n%s x%g %s — *Rp%s*%s\n📦 Stok: %g %s",
 			goods.Name, ext.Quantity, stockUnit,
-			agent.FormatRupiah(ext.Amount), category,
+			agent.FormatRupiah(ext.Amount), categoryLine(category),
 			inv.StockQty, inv.Unit,
 		) + previousPriceComparison(unitPrice(ext.Amount, ext.Quantity), stockUnit, lastPurchase), nil
 	}
 
-	baseReply := fmt.Sprintf(
-		"Pengeluaran tercatat: %s sebesar Rp%s (%s).",
-		ext.ItemName, agent.FormatRupiah(ext.Amount), category,
-	)
-
-	if analysis := repurchaseAnalysis(txnDate, lastPurchase); analysis != "" {
-		baseReply += analysis
-	}
-
-	return baseReply, nil
+	return fmt.Sprintf(
+		"✅ *Pengeluaran tercatat*\n%s — *Rp%s*%s",
+		goods.Name, agent.FormatRupiah(ext.Amount), categoryLine(category),
+	) + repurchaseAnalysis(txnDate, lastPurchase), nil
 }
 
 // handleConsumption: kurangi stok + log OUT + update consumption cycle (RFC §7.2).
@@ -429,18 +423,14 @@ func (a *transactionAgent) handleConsumption(ctx context.Context, msg entity.Inc
 	}
 
 	// Fetch updated inventory after transaction for accurate remaining stock
-	updatedInv, err := a.invRepo.WithTx(a.db).GetByChatGoods(ctx, msg.ChatID, inv.GoodsID)
-	if err != nil {
-		remaining := inv.StockQty - ext.Quantity
-		return fmt.Sprintf(
-			"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
-			ext.ItemName, ext.Quantity, ext.Unit, remaining, inv.Unit,
-		), nil
+	remaining, unit := inv.StockQty-ext.Quantity, inv.Unit
+	if updatedInv, err := a.invRepo.WithTx(a.db).GetByChatGoods(ctx, msg.ChatID, inv.GoodsID); err == nil {
+		remaining, unit = updatedInv.StockQty, updatedInv.Unit
 	}
 
 	return fmt.Sprintf(
-		"🔄 Pemakaian tercatat: %s -%g %s. Sisa stok: %g %s.\n✅ Consumption cycle: ACTIVE",
-		ext.ItemName, ext.Quantity, ext.Unit, updatedInv.StockQty, updatedInv.Unit,
+		"🔄 *Pemakaian tercatat*\n%s -%g %s\n📦 Sisa stok: %g %s\n✅ Consumption cycle: ACTIVE",
+		ext.ItemName, ext.Quantity, ext.Unit, remaining, unit,
 	), nil
 }
 

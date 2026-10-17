@@ -174,9 +174,9 @@ func TestRepurchaseAnalysisOnlyForNonStock(t *testing.T) {
 			Action:  domain.ServiceAction{Action: domain.ActionRecordTransaction},
 		}))
 		require.Len(t, senderMock.msgs, 1)
-		assert.Contains(t, senderMock.msgs[0], "Stok saat ini")
+		assert.Contains(t, senderMock.msgs[0], "📦 Stok: 1 karung")
 		assert.NotContains(t, senderMock.msgs[0], "Analisa beli ulang")
-		assert.Contains(t, senderMock.msgs[0], "Harga beli sebelumnya")
+		assert.Contains(t, senderMock.msgs[0], "Harga sebelumnya")
 	})
 }
 
@@ -186,16 +186,16 @@ func TestPreviousPriceComparison(t *testing.T) {
 		TransactionDate: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
 	}
 	assert.Empty(t, previousPriceComparison(100000, "karung", nil))
-	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09) → naik Rp5.000.",
+	assert.Equal(t, "\n📈 Harga sebelumnya: Rp95.000/karung (02/09) → naik Rp5.000",
 		previousPriceComparison(100000, "karung", last))
-	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09) → turun Rp5.000.",
+	assert.Equal(t, "\n📉 Harga sebelumnya: Rp95.000/karung (02/09) → turun Rp5.000",
 		previousPriceComparison(90000, "karung", last))
-	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09) → harga sama.",
+	assert.Equal(t, "\n💲 Harga sebelumnya: Rp95.000/karung (02/09) → harga sama",
 		previousPriceComparison(95000, "karung", last))
 	// Satuan beda → tanpa selisih (tidak bisa dibandingkan langsung).
-	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09).",
+	assert.Equal(t, "\n💲 Harga sebelumnya: Rp95.000/karung (02/09)",
 		previousPriceComparison(20000, "kg", last))
 	// Row lama tanpa unit_price → tampilkan total.
-	assert.Equal(t, " Harga beli sebelumnya: Rp95.000 (02/09).",
+	assert.Equal(t, "\n💲 Harga sebelumnya: Rp95.000 (02/09)",
 		previousPriceComparison(100000, "karung", &domain.Transaction{Amount: 95000, TransactionDate: last.TransactionDate}))
 }

@@ -33,9 +33,7 @@ func TestRepurchaseAnalysis(t *testing.T) {
 			TransactionDate: time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC),
 		}
 		got := repurchaseAnalysis(base, last)
-		assert.Contains(t, got, "token listrik sebelumnya Rp200.000 (11/08)")
-		assert.Contains(t, got, "bertahan 1 bulan")
-		assert.Contains(t, got, "rata-rata Rp6.667/hari")
+		assert.Equal(t, "\n🔁 *Analisa beli ulang*\nSebelumnya: Rp200.000 (11/08)\nBertahan 1 bulan → rata-rata *Rp6.667/hari*", got)
 	})
 
 	t.Run("jarak 6 hari", func(t *testing.T) {
@@ -45,9 +43,14 @@ func TestRepurchaseAnalysis(t *testing.T) {
 			TransactionDate: base.AddDate(0, 0, -6),
 		}
 		got := repurchaseAnalysis(base, last)
-		assert.True(t, strings.Contains(got, "bertahan 6 hari"))
-		assert.Contains(t, got, "rata-rata Rp8.333/hari")
+		assert.True(t, strings.Contains(got, "Bertahan 6 hari"))
+		assert.Contains(t, got, "rata-rata *Rp8.333/hari*")
 	})
+}
+
+func TestCategoryLine(t *testing.T) {
+	assert.Equal(t, "\n🏷️ SEMBAKO", categoryLine("SEMBAKO"))
+	assert.Empty(t, categoryLine(""), "kategori kosong → tanpa baris label")
 }
 
 // TestParseTransactionDateShortFormatUsesCurrentYear: tanggal tanpa tahun

@@ -120,31 +120,40 @@ func formatDuration(days float64) string {
 	return fmt.Sprintf("%.0f bulan", months)
 }
 
-// previousPriceComparison menyusun pembanding harga beli sebelumnya untuk
-// barang stok, mis. " Harga beli sebelumnya: Rp95.000/karung (02/09) → naik
-// Rp5.000.". Selisih hanya dihitung bila kedua harga satuan tersedia dengan
-// satuan sama; selain itu tampilkan harga sebelumnya apa adanya. Kosong bila
-// belum ada pembelian sebelumnya.
+// categoryLine menyusun baris kategori balasan ("\n🏷️ SEMBAKO"); kosong
+// bila kategori belum ada agar tidak muncul baris label tanpa isi.
+func categoryLine(category string) string {
+	if category == "" {
+		return ""
+	}
+	return "\n🏷️ " + category
+}
+
+// previousPriceComparison menyusun baris pembanding harga beli sebelumnya
+// untuk barang stok, mis. "\n📈 Harga sebelumnya: Rp95.000/karung (02/09) →
+// naik Rp5.000". Selisih hanya dihitung bila kedua harga satuan tersedia
+// dengan satuan sama; selain itu tampilkan harga sebelumnya apa adanya.
+// Kosong bila belum ada pembelian sebelumnya.
 func previousPriceComparison(newUnitPrice float64, unit string, last *domain.Transaction) string {
 	if last == nil || last.Amount <= 0 {
 		return ""
 	}
 	date := last.TransactionDate.Format("02/01")
 	if last.UnitPrice <= 0 || last.Unit == "" {
-		return fmt.Sprintf(" Harga beli sebelumnya: Rp%s (%s).", agent.FormatRupiah(last.Amount), date)
+		return fmt.Sprintf("\n💲 Harga sebelumnya: Rp%s (%s)", agent.FormatRupiah(last.Amount), date)
 	}
-	prev := fmt.Sprintf(" Harga beli sebelumnya: Rp%s/%s (%s)", agent.FormatRupiah(last.UnitPrice), last.Unit, date)
+	prev := fmt.Sprintf("Harga sebelumnya: Rp%s/%s (%s)", agent.FormatRupiah(last.UnitPrice), last.Unit, date)
 	if newUnitPrice <= 0 || last.Unit != unit {
-		return prev + "."
+		return "\n💲 " + prev
 	}
 	diff := math.Round(newUnitPrice - last.UnitPrice)
 	switch {
 	case diff > 0:
-		return fmt.Sprintf("%s → naik Rp%s.", prev, agent.FormatRupiah(diff))
+		return fmt.Sprintf("\n📈 %s → naik Rp%s", prev, agent.FormatRupiah(diff))
 	case diff < 0:
-		return fmt.Sprintf("%s → turun Rp%s.", prev, agent.FormatRupiah(-diff))
+		return fmt.Sprintf("\n📉 %s → turun Rp%s", prev, agent.FormatRupiah(-diff))
 	default:
-		return prev + " → harga sama."
+		return "\n💲 " + prev + " → harga sama"
 	}
 }
 
@@ -169,9 +178,8 @@ func repurchaseAnalysis(newTxnDate time.Time, last *domain.Transaction) string {
 			agent.FormatRupiah(last.Amount), last.TransactionDate.Format("02/01"))
 	}
 	return fmt.Sprintf(
-		" Analisa beli ulang: %s sebelumnya %s bertahan %s → rata-rata Rp%s/hari.",
-		last.ItemName, detail,
-		formatDuration(days), agent.FormatRupiah(math.Round(avgDaily)),
+		"\n🔁 *Analisa beli ulang*\nSebelumnya: %s\nBertahan %s → rata-rata *Rp%s/hari*",
+		detail, formatDuration(days), agent.FormatRupiah(math.Round(avgDaily)),
 	)
 }
 

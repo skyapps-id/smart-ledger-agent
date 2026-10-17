@@ -269,9 +269,9 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			return fmt.Errorf("catat expense: %w", err)
 		}
 
-		// Ambil pembelian terakhir barang yang sama (relasi goods) untuk
-		// analisa beli ulang (stok maupun non-stok: umur 1 ball pampers /
-		// 1 token listrik, dll).
+		// Ambil pembelian terakhir barang yang sama (relasi goods): non-stok
+		// → analisa beli ulang (umur 1 token listrik, 1x isi bensin, dll);
+		// stok → pembanding harga saja (pemakaian dianalisa modul consumption).
 		if ext.Amount > 0 {
 			lastPurchase, _ = a.txnRepo.WithTx(tx).LastExpenseByGoods(ctx, msg.ChatID, goods.ID, txn.ID, txnDate)
 		}
@@ -314,19 +314,14 @@ func (a *transactionAgent) handleExpense(ctx context.Context, msg entity.Incomin
 			), nil
 		}
 
-		// Build reply utama
-		baseReply := fmt.Sprintf(
+		// Barang stok: cukup pembanding harga beli sebelumnya, tanpa
+		// analisa beli ulang — laju pemakaiannya dihitung modul consumption.
+		return fmt.Sprintf(
 			"Pengeluaran tercatat: %s x%g %s = Rp%s (%s). Stok saat ini: %g %s.",
 			goods.Name, ext.Quantity, stockUnit,
 			agent.FormatRupiah(ext.Amount), category,
 			inv.StockQty, inv.Unit,
-		)
-
-		if analysis := repurchaseAnalysis(txnDate, lastPurchase); analysis != "" {
-			baseReply += analysis
-		}
-
-		return baseReply, nil
+		) + previousPriceComparison(unitPrice(ext.Amount, ext.Quantity), stockUnit, lastPurchase), nil
 	}
 
 	baseReply := fmt.Sprintf(

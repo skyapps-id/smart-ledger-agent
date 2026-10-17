@@ -123,7 +123,36 @@ func formatDuration(days float64) string {
 	return fmt.Sprintf("%.0f bulan", months)
 }
 
-// repurchaseAnalysis menyusun kalimat analisa beli ulang untuk item non-stok:
+// previousPriceComparison menyusun pembanding harga beli sebelumnya untuk
+// barang stok, mis. " Harga beli sebelumnya: Rp95.000/karung (02/09) → naik
+// Rp5.000.". Selisih hanya dihitung bila kedua harga satuan tersedia dengan
+// satuan sama; selain itu tampilkan harga sebelumnya apa adanya. Kosong bila
+// belum ada pembelian sebelumnya.
+func previousPriceComparison(newUnitPrice float64, unit string, last *domain.Transaction) string {
+	if last == nil || last.Amount <= 0 {
+		return ""
+	}
+	date := last.TransactionDate.Format("02/01")
+	if last.UnitPrice <= 0 || last.Unit == "" {
+		return fmt.Sprintf(" Harga beli sebelumnya: Rp%s (%s).", agent.FormatRupiah(last.Amount), date)
+	}
+	prev := fmt.Sprintf(" Harga beli sebelumnya: Rp%s/%s (%s)", agent.FormatRupiah(last.UnitPrice), last.Unit, date)
+	if newUnitPrice <= 0 || last.Unit != unit {
+		return prev + "."
+	}
+	diff := math.Round(newUnitPrice - last.UnitPrice)
+	switch {
+	case diff > 0:
+		return fmt.Sprintf("%s → naik Rp%s.", prev, agent.FormatRupiah(diff))
+	case diff < 0:
+		return fmt.Sprintf("%s → turun Rp%s.", prev, agent.FormatRupiah(-diff))
+	default:
+		return prev + " → harga sama."
+	}
+}
+
+// repurchaseAnalysis menyusun kalimat analisa beli ulang untuk item non-stok
+// (barang stok dianalisa modul consumption, bukan di sini):
 // berapa lama pembelian sebelumnya "bertahan" (jarak ke pembelian baru) dan
 // rata-rata belanja per hari. Mengembalikan string kosong bila tidak layak
 // ditampilkan (tidak ada pembelian sebelumnya atau jarak < 1 hari).

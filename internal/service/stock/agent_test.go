@@ -199,6 +199,34 @@ func TestGetStockMasterItemWithoutPurchase(t *testing.T) {
 	assert.Contains(t, senderMock.msgs[0], "belum pernah dibeli")
 }
 
+func TestGetStockNonStockItemShowsLastPurchase(t *testing.T) {
+	ag, db, senderMock := setupStockAgentTest(t)
+	ctx := context.Background()
+
+	// Barang non-stok tidak pernah punya baris inventory, tapi pembelian
+	// terakhirnya tetap harus terjawab ("pembelian terakhir bensin").
+	bensin, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "bensin", "liter")
+	require.NoError(t, err)
+	require.NoError(t, ag.goodsRepo.UpdateAffectsStock(ctx, bensin.ID, false))
+	require.NoError(t, db.Create(&domain.Transaction{
+		ChatID: "c1", Type: domain.TransactionExpense, GoodsID: bensin.ID, ItemName: "bensin",
+		Amount: 50000, Quantity: 5, Unit: "liter", UnitPrice: 10000,
+		TransactionDate: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
+	}).Error)
+
+	err = ag.Handle(ctx, agent.Request{
+		Message: stockIncoming("pembelian terakhir bensin"),
+		Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+		Action: domain.ServiceAction{Action: domain.ActionGetStock, Params: map[string]interface{}{
+			"item_filter": "bensin",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, senderMock.msgs, 1)
+	assert.Contains(t, senderMock.msgs[0], "bensin: non-stok (beli terakhir: Rp10.000/liter, 02/09)")
+	assert.NotContains(t, senderMock.msgs[0], "belum pernah dibeli")
+}
+
 func TestGetStockUnknownItem(t *testing.T) {
 	ag, _, senderMock := setupStockAgentTest(t)
 

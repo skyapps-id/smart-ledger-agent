@@ -13,7 +13,7 @@ ACTIONS & PARAMS:
 2. help — panduan ("bantuan","bantu","panduan","menu","format","help","cara pakai","guna"). params {}
 3. info — identitas sesi/chat ("info","sesi","session","debug","identitas"). params {}
 4. goods — master barang & satuan ("tambah barang [x] satuan [u]","daftarkan barang","master barang","katalog barang","daftar barang","info barang [x]","set 1 [barang] [n][satuan]","ubah konversi [barang] jadi [n][satuan]","set satuan [barang] jadi [satuan]","set kategori [barang] jadi [kategori]","set stok [barang] ya|tidak","non stok","tanpa stok"). goods_action=list|info|add|set_factor|set_uom|set_category|set_stock; item_name?; factor_qty?; factor_unit?; unit?; category?; affects_stock? (bool; add: "non stok" → false; set_stock: ya→true, tidak→false) ("set 1 galon 15lt" → item_name "galon", factor_qty 15, factor_unit "lt").
-5. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]"). item_filter? ("stok kecap" → "kecap")
+5. get_stock — query stok atau harga beli terakhir ("stok","stock","sisa [barang]","persediaan","persedian","inventaris","inventori","barang","cek [item]","masih ada [item]","harga [item]","berapa harga [item]","harga beli terakhir [item]","pembelian terakhir [item]","terakhir beli [item]","kapan terakhir beli [item]"). item_filter? ("stok kecap" → "kecap")
 6. get_report — laporan keuangan/pemakaian ("pengeluaran","pengeluaran apa aja","pemasukan","pendapatan","laporan","ringkasan","rekap","total","boros","cash flow","arus kas","sisa uang","sisa dana","sisa kas","uang saya").
    report_type=summary|income|expense|expense_by_item|consumption; period=today|yesterday|this_week|last_week|this_month|last_month|custom|all; item_filter?; from_date?,to_date? (YYYY-MM-DD; wajib saat period=custom; "01/08" → tahun berjalan).
 7. consumption — pemakaian stok ("pakai","sudah/udah pakai","dipakai","ambil","terpakai","sudah terpakai","habis","konsumsi","pemakaian","barang/item aktif","history konsumsi").
@@ -28,7 +28,7 @@ PRIORITAS (cek berurutan, berhenti di kecocokan pertama):
 4. "konsumsi"/"pemakaian"/"barang aktif" → consumption (tanpa item → list, ada item → info). BUKAN get_report meski ada kata "analisa".
 5. "init"/"mulai"/"daftar"/"aktivasi"/"start" di awal pesan → init.
 6. "bantuan" dll → help; "info"/"sesi"/"debug" → info.
-7. "beli"/"bayar"/"jual"/"gaji"/"terima"/"top up" dll ATAU nominal uang → record_transaction, walau menyebut "stok" ("beli stok kecap 50rb" = transaksi, bukan query). KECUALI ada kata "harga" (query harga beli, bukan pencatatan) → get_stock.
+7. "beli"/"bayar"/"jual"/"gaji"/"terima"/"top up" dll ATAU nominal uang → record_transaction, walau menyebut "stok" ("beli stok kecap 50rb" = transaksi, bukan query). KECUALI ada kata "harga", atau "terakhir" tanpa nominal uang ("pembelian terakhir beras", "kapan terakhir beli galon") — query riwayat beli, bukan pencatatan → get_stock.
 8. "master barang"/"katalog barang"/"daftar barang" ATAU "set"/"ubah konversi"/"ubah satuan"/"set satuan" → goods (BUKAN get_stock). "barang"/"sisa barang" tanpa kata itu tetap get_stock.
 9. "stok"/"sisa"/"persediaan"/"inventaris" + BARANG → get_stock. CATATAN: "sisa uang/dana/kas" atau "berapa sisa saldo" → get_report (uang), sedangkan "sisa barang/stok/minyak" → get_stock (barang).
 10. "pengeluaran"/"pemasukan"/"laporan"/"ringkasan"/"total"/"rekap" → get_report.
@@ -44,6 +44,8 @@ CONTOH:
 "stok kecap" → {"action":"get_stock","params":{"item_filter":"kecap"}}
 "berapa stok kecap?" → {"action":"get_stock","params":{"item_filter":"kecap"}}
 "harga beli terakhir susu bmt 800g" → {"action":"get_stock","params":{"item_filter":"susu bmt 800g"}}
+"pembelian terakhir galon" → {"action":"get_stock","params":{"item_filter":"galon"}}
+"kapan terakhir beli bensin?" → {"action":"get_stock","params":{"item_filter":"bensin"}}
 "masih ada susu gak?" → {"action":"get_stock","params":{"item_filter":"susu"}}
 "persedian" → {"action":"get_stock","params":{}}
 "tambah barang galon satuan galon" → {"action":"goods","params":{"goods_action":"add","item_name":"galon","unit":"galon"}}

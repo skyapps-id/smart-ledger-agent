@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,4 +124,78 @@ func TestExpenseNonStockMasterSkipsInventory(t *testing.T) {
 
 	_, err = ag.invRepo.GetByChatGoods(ctx, "c1", g.ID)
 	assert.Error(t, err, "barang non-stok tidak boleh punya row inventory")
+}
+
+// seedPreviousExpense mencatat pembelian sebelumnya (10 hari lalu) agar
+// analisa beli ulang punya pembanding.
+func seedPreviousExpense(t *testing.T, db *gorm.DB, goodsID int64, name string) {
+	t.Helper()
+	require.NoError(t, db.Create(&domain.Transaction{
+		ChatID: "c1", Type: domain.TransactionExpense, GoodsID: goodsID, ItemName: name,
+		Amount: 100000, Quantity: 1, Unit: "pcs", UnitPrice: 100000,
+		TransactionDate: time.Now().AddDate(0, 0, -10),
+	}).Error)
+}
+
+// TestRepurchaseAnalysisOnlyForNonStock: analisa beli ulang hanya untuk
+// barang non-stok; barang stok punya modul consumption sendiri.
+func TestRepurchaseAnalysisOnlyForNonStock(t *testing.T) {
+	t.Run("non-stok tampil analisa", func(t *testing.T) {
+		ag, db, senderMock := setupTxnAgentTest(t, domain.Extraction{
+			Type: domain.ExtractionExpense, ItemName: "bensin", Quantity: 5, Unit: "liter", Amount: 50000,
+		})
+		ctx := context.Background()
+		g, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "bensin", "liter")
+		require.NoError(t, err)
+		require.NoError(t, ag.goodsRepo.UpdateAffectsStock(ctx, g.ID, false))
+		seedPreviousExpense(t, db, g.ID, "bensin")
+
+		require.NoError(t, ag.Handle(ctx, agent.Request{
+			Message: entity.IncomingMessage{ChatID: "c1", Text: "beli bensin 5 liter 50rb"},
+			Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+			Action:  domain.ServiceAction{Action: domain.ActionRecordTransaction},
+		}))
+		require.Len(t, senderMock.msgs, 1)
+		assert.Contains(t, senderMock.msgs[0], "Analisa beli ulang")
+	})
+
+	t.Run("stok tanpa analisa", func(t *testing.T) {
+		ag, db, senderMock := setupTxnAgentTest(t, domain.Extraction{
+			Type: domain.ExtractionExpense, ItemName: "beras", Quantity: 1, Unit: "karung", Amount: 100000,
+		})
+		ctx := context.Background()
+		g, err := ag.goodsRepo.GetOrCreateByName(ctx, "c1", "beras", "karung")
+		require.NoError(t, err)
+		seedPreviousExpense(t, db, g.ID, "beras")
+
+		require.NoError(t, ag.Handle(ctx, agent.Request{
+			Message: entity.IncomingMessage{ChatID: "c1", Text: "beli beras 1 karung 100rb"},
+			Chat:    &domain.Chat{ChatID: "c1", Initialized: true},
+			Action:  domain.ServiceAction{Action: domain.ActionRecordTransaction},
+		}))
+		require.Len(t, senderMock.msgs, 1)
+		assert.Contains(t, senderMock.msgs[0], "Stok saat ini")
+		assert.NotContains(t, senderMock.msgs[0], "Analisa beli ulang")
+		assert.Contains(t, senderMock.msgs[0], "Harga beli sebelumnya")
+	})
+}
+
+func TestPreviousPriceComparison(t *testing.T) {
+	last := &domain.Transaction{
+		Amount: 95000, Quantity: 1, Unit: "karung", UnitPrice: 95000,
+		TransactionDate: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
+	}
+	assert.Empty(t, previousPriceComparison(100000, "karung", nil))
+	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09) → naik Rp5.000.",
+		previousPriceComparison(100000, "karung", last))
+	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09) → turun Rp5.000.",
+		previousPriceComparison(90000, "karung", last))
+	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09) → harga sama.",
+		previousPriceComparison(95000, "karung", last))
+	// Satuan beda → tanpa selisih (tidak bisa dibandingkan langsung).
+	assert.Equal(t, " Harga beli sebelumnya: Rp95.000/karung (02/09).",
+		previousPriceComparison(20000, "kg", last))
+	// Row lama tanpa unit_price → tampilkan total.
+	assert.Equal(t, " Harga beli sebelumnya: Rp95.000 (02/09).",
+		previousPriceComparison(100000, "karung", &domain.Transaction{Amount: 95000, TransactionDate: last.TransactionDate}))
 }

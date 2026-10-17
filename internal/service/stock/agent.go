@@ -138,8 +138,10 @@ func uomOrPcs(uom string) string {
 }
 
 // replyUnknownItem menangani query stok yang tidak ketemu di inventory:
-// cek master goods dulu — barang terdaftar tapi belum pernah dibeli →
-// jawab "stok 0"; benar-benar asing → arahkan mendaftarkan ke master.
+// cek master goods dulu — barang non-stok (affects_stock=false, mis. bensin)
+// tidak pernah punya baris inventory, jadi tetap tampilkan pembelian
+// terakhirnya; barang terdaftar tapi belum pernah dibeli → jawab "stok 0";
+// benar-benar asing → arahkan mendaftarkan ke master.
 func (a *stockAgent) replyUnknownItem(ctx context.Context, chatID, itemFilter string, intentCost float64) error {
 	goods, err := a.goodsRepo.WithTx(a.db).SearchByName(ctx, chatID, itemFilter, 5)
 	if err != nil {
@@ -150,7 +152,17 @@ func (a *stockAgent) replyUnknownItem(ctx context.Context, chatID, itemFilter st
 		var b strings.Builder
 		fmt.Fprintf(&b, "Stok saat ini (%s):\n", itemFilter)
 		for _, g := range goods {
-			fmt.Fprintf(&b, "- %s: 0 %s (terdaftar di master, belum pernah dibeli)\n", g.Name, uomOrPcs(g.Uom))
+			last, err := a.txnRepo.WithTx(a.db).LastExpenseByGoods(ctx, chatID, g.ID, 0, time.Now())
+			switch {
+			case err == nil && !g.AffectsStock:
+				fmt.Fprintf(&b, "- %s: non-stok (%s)\n", g.Name, formatLastPurchase(last))
+			case err == nil:
+				fmt.Fprintf(&b, "- %s: 0 %s (%s)\n", g.Name, uomOrPcs(g.Uom), formatLastPurchase(last))
+			case !g.AffectsStock:
+				fmt.Fprintf(&b, "- %s: non-stok (belum pernah dibeli)\n", g.Name)
+			default:
+				fmt.Fprintf(&b, "- %s: 0 %s (terdaftar di master, belum pernah dibeli)\n", g.Name, uomOrPcs(g.Uom))
+			}
 		}
 		return agent.SendReplyWithCost(ctx, a.log, a.sender, chatID, b.String(), intentCost)
 	}

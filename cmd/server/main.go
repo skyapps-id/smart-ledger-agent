@@ -110,7 +110,7 @@ func main() {
 	)
 
 	// ── HTTP (Echo) ──
-	webhook := handler.NewWebhook(pool, cfg.WAHA.WebhookToken, logger)
+	webhook := handler.NewWebhook(pool, wahaSender, cfg.WAHA.WebhookToken, logger)
 	health := handler.NewHealth()
 
 	// Endpoint test tanpa WAHA — hanya terpasang saat dev mode aktif.

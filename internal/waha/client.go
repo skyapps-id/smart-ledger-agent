@@ -17,6 +17,11 @@ import (
 // Sender abstraksi pengiriman pesan WhatsApp.
 type Sender interface {
 	SendText(ctx context.Context, chatID, text string) error
+	// StartTyping menampilkan indikator "mengetik..." di chat — tanda ke
+	// user bahwa pesannya sedang diproses (LLM bisa butuh puluhan detik).
+	StartTyping(ctx context.Context, chatID string) error
+	// StopTyping menghentikan indikator "mengetik...".
+	StopTyping(ctx context.Context, chatID string) error
 }
 
 // New membuat klien WAHA.
@@ -40,19 +45,38 @@ type sendTextRequest struct {
 	Session string `json:"session"`
 }
 
+type chatRequest struct {
+	ChatID  string `json:"chatId"`
+	Session string `json:"session"`
+}
+
 // SendText mengirim pesan teks ke chatID (nomor WA, format: 62xxx@c.us).
 func (c *wahaClient) SendText(ctx context.Context, chatID, text string) error {
-	payload := sendTextRequest{
+	return c.post(ctx, "/api/sendText", sendTextRequest{
 		ChatID:  chatID,
 		Text:    text,
 		Session: c.cfg.Session,
-	}
+	})
+}
+
+// StartTyping memanggil WAHA /api/startTyping untuk chatID.
+func (c *wahaClient) StartTyping(ctx context.Context, chatID string) error {
+	return c.post(ctx, "/api/startTyping", chatRequest{ChatID: chatID, Session: c.cfg.Session})
+}
+
+// StopTyping memanggil WAHA /api/stopTyping untuk chatID.
+func (c *wahaClient) StopTyping(ctx context.Context, chatID string) error {
+	return c.post(ctx, "/api/stopTyping", chatRequest{ChatID: chatID, Session: c.cfg.Session})
+}
+
+// post mengirim payload JSON ke endpoint WAHA dengan header auth.
+func (c *wahaClient) post(ctx context.Context, path string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload waha: %w", err)
 	}
 
-	endpoint, err := url.JoinPath(c.cfg.BaseURL, "/api/sendText")
+	endpoint, err := url.JoinPath(c.cfg.BaseURL, path)
 	if err != nil {
 		return fmt.Errorf("bangun url waha: %w", err)
 	}
@@ -74,7 +98,7 @@ func (c *wahaClient) SendText(ctx context.Context, chatID, text string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("waha sendText status %d", resp.StatusCode)
+		return fmt.Errorf("waha %s status %d", path, resp.StatusCode)
 	}
 	return nil
 }

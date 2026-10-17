@@ -2,11 +2,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -20,19 +22,27 @@ type MessageQueue interface {
 	Enqueue(msg entity.IncomingMessage) bool
 }
 
+// Typer menampilkan indikator "mengetik..." di chat (diimplementasikan
+// waha.Sender).
+type Typer interface {
+	StartTyping(ctx context.Context, chatID string) error
+}
+
 // WebhookHandler menangani callback WAHA untuk pesan masuk.
 type WebhookHandler struct {
 	queue MessageQueue
+	// typer boleh nil (indikator mengetik mati).
+	typer Typer
 	token string
 	log   *slog.Logger
 }
 
 // NewWebhook membuat handler webhook.
-func NewWebhook(queue MessageQueue, token string, logger *slog.Logger) *WebhookHandler {
+func NewWebhook(queue MessageQueue, typer Typer, token string, logger *slog.Logger) *WebhookHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &WebhookHandler{queue: queue, token: token, log: logger}
+	return &WebhookHandler{queue: queue, typer: typer, token: token, log: logger}
 }
 
 // Handle menerima webhook WAHA, memvalidasi, lalu memasukkan pesan ke antrean.
@@ -110,9 +120,26 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 		// Tetap 200 agar WAHA tidak retry endlessly.
 	} else {
 		log.Info("webhook: pesan masuk antrean worker", "chat", msg.ChatID, "sender", msg.UserPhone)
+		h.startTyping(log, msg.ChatID)
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{"status": "queued"})
+}
+
+// startTyping menyalakan indikator "mengetik..." di background agar user
+// tahu pesannya diterima selama LLM memproses. Tidak memblok ack webhook;
+// gagal hanya di-log (dimatikan lagi oleh sender sebelum balasan terkirim).
+func (h *WebhookHandler) startTyping(log *slog.Logger, chatID string) {
+	if h.typer == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.typer.StartTyping(ctx, chatID); err != nil {
+			log.Warn("webhook: gagal start typing", "chat", chatID, "err", err)
+		}
+	}()
 }
 
 func (h *WebhookHandler) validateToken(c echo.Context) bool {

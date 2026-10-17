@@ -19,7 +19,10 @@ func NewWahaProcessor(wahaSender waha.Sender) *WahaProcessor {
 	}
 }
 
-// SendMessage mengirim pesan teks ke WhatsApp via WAHA.
+// SendMessage mengirim pesan teks ke WhatsApp via WAHA. Indikator
+// "mengetik..." (dinyalakan webhook saat pesan masuk) dimatikan dulu;
+// gagal stop tidak menggagalkan pengiriman.
 func (p *WahaProcessor) SendMessage(ctx context.Context, msg Message) error {
+	_ = p.wahaSender.StopTyping(ctx, msg.ChatID)
 	return p.wahaSender.SendText(ctx, msg.ChatID, msg.Text)
 }
